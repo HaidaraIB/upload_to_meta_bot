@@ -440,6 +440,12 @@ async def show_admin_permissions(update: Update, context: ContextTypes.DEFAULT_T
                     "permission_manage_force_join", "Manage Force Join"
                 ),
                 models.Permission.VIEW_IDS: TEXTS[lang].get("permission_view_ids", "View IDs"),
+                    models.Permission.UPLOAD_TO_META: TEXTS[lang].get(
+                        "permission_upload_to_meta", "Upload to Meta"
+                    ),
+                    models.Permission.MANAGE_META_SETTINGS: TEXTS[lang].get(
+                        "permission_manage_meta_settings", "Manage Meta Settings"
+                    ),
             }
             for perm in selected_permissions:
                 permissions_text += f"✅ {permission_names.get(perm, perm.value)}\n"

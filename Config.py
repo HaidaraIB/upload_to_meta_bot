@@ -14,3 +14,8 @@ class Config:
     DB_PATH = os.getenv("DB_PATH")
     DB_POOL_SIZE = 20
     DB_MAX_OVERFLOW = 10
+
+    # Meta Graph API (Facebook + Instagram)
+    META_GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v25.0")
+    META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
+    RUUPLOAD_BASE = os.getenv("RUUPLOAD_BASE", "https://rupload.facebook.com")

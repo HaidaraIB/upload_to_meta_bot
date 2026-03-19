@@ -53,6 +53,12 @@ def build_permissions_keyboard(
         models.Permission.VIEW_IDS: BUTTONS[lang].get(
             "permission_view_ids", "View IDs"
         ),
+        models.Permission.UPLOAD_TO_META: BUTTONS[lang].get(
+            "permission_upload_to_meta", "Upload to Meta"
+        ),
+        models.Permission.MANAGE_META_SETTINGS: BUTTONS[lang].get(
+            "permission_manage_meta_settings", "Manage Meta Settings"
+        ),
     }
 
     for permission in models.Permission:

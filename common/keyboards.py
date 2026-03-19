@@ -38,6 +38,18 @@ def build_admin_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=BUTTONS[lang]["meta_settings"],
+                    callback_data="meta_settings",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=BUTTONS[lang]["upload_to_meta"],
+                    callback_data="meta_upload",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=BUTTONS[lang]["manage_users_settings"],
                     callback_data="manage_users_settings",
                 )
@@ -75,6 +87,26 @@ def build_admin_keyboard(
                     InlineKeyboardButton(
                         text=BUTTONS[lang]["force_join_chats_settings"],
                         callback_data="force_join_chats_settings",
+                    )
+                ]
+            )
+
+        if HasPermission.check(user_id, models.Permission.MANAGE_META_SETTINGS):
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=BUTTONS[lang]["meta_settings"],
+                        callback_data="meta_settings",
+                    )
+                ]
+            )
+
+        if HasPermission.check(user_id, models.Permission.UPLOAD_TO_META):
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=BUTTONS[lang]["upload_to_meta"],
+                        callback_data="meta_upload",
                     )
                 ]
             )

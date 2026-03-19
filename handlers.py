@@ -13,6 +13,8 @@ from user.user_settings import *
 
 from admin.admin_calls import *
 from admin.admin_settings import *
+from admin.meta_settings import meta_settings_handler
+from admin.meta_upload import meta_upload_handler
 from admin.broadcast import *
 from admin.ban import *
 from admin.force_join_chats_settings import *
@@ -38,6 +40,7 @@ def setup_and_run():
     app.add_handler(remove_admin_handler)
     app.add_handler(edit_admin_permissions_handler)
     app.add_handler(admin_settings_handler)
+    app.add_handler(meta_settings_handler)
     
     # MANAGE USERS SETTINGS
     app.add_handler(manage_users_settings_handler)
@@ -50,6 +53,7 @@ def setup_and_run():
     app.add_handler(force_join_chats_settings_handler)
 
     app.add_handler(broadcast_message_handler)
+    app.add_handler(meta_upload_handler)
 
     app.add_handler(check_joined_handler)
 

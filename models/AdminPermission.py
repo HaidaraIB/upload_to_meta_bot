@@ -10,6 +10,8 @@ class Permission(Enum):
     MANAGE_FORCE_JOIN = "manage_force_join"
     VIEW_IDS = "view_ids"
     MANAGE_USERS = "manage_users"
+    UPLOAD_TO_META = "upload_to_meta"
+    MANAGE_META_SETTINGS = "manage_meta_settings"
 
 
 class AdminPermission(Base):
