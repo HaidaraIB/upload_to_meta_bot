@@ -37,6 +37,11 @@ class Config:
     META_GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v25.0")
     META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
     RUUPLOAD_BASE = os.getenv("RUUPLOAD_BASE", "https://rupload.facebook.com")
+    _meta_http_timeout_raw = os.getenv("META_HTTP_TIMEOUT_TOTAL", "600")
+    try:
+        META_HTTP_TIMEOUT_TOTAL = max(60, int(_meta_http_timeout_raw))
+    except ValueError:
+        META_HTTP_TIMEOUT_TOTAL = 600
 
     # Max Telegram media size to load into memory for Meta publish (Telethon path).
     _max_mb_raw = os.getenv("TELEGRAM_MEDIA_MAX_MB", "200")

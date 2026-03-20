@@ -119,6 +119,7 @@ async def _upload_to_rupload(
         "Authorization": f"OAuth {access_token or Config.META_ACCESS_TOKEN}",
         "offset": "0",
         "file_size": str(len(file_bytes)),
+        "Content-Type": "application/octet-stream",
     }
     async with session.post(upload_url, headers=headers, data=file_bytes) as resp:
         if resp.status >= 400:
@@ -197,6 +198,7 @@ async def _ig_upload_and_publish_video_resumable(
         "Authorization": f"OAuth {token}",
         "offset": "0",
         "file_size": str(len(video_bytes)),
+        "Content-Type": "application/octet-stream",
     }
     async with session.post(upload_url, headers=headers, data=video_bytes) as resp:
         if resp.status >= 400:
@@ -206,6 +208,12 @@ async def _ig_upload_and_publish_video_resumable(
                 status=resp.status,
                 detail=(body or "")[:400],
             )
+        logger.info(
+            "IG rupload ok: creation_id=%s status=%s bytes=%s",
+            creation_id,
+            resp.status,
+            len(video_bytes),
+        )
 
     body = await _graph_request(
         session,
@@ -285,7 +293,10 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
         bool(media_file_id),
     )
 
-    timeout = aiohttp.ClientTimeout(total=60)
+    timeout = aiohttp.ClientTimeout(
+        total=getattr(Config, "META_HTTP_TIMEOUT_TOTAL", 600),
+        sock_read=getattr(Config, "META_HTTP_TIMEOUT_TOTAL", 600),
+    )
     async with aiohttp.ClientSession(timeout=timeout) as session:
         video_bytes = None
         photo_bytes = None
