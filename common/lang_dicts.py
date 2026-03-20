@@ -116,6 +116,10 @@ TEXTS = {
         "meta_upload_enter_caption_optional": "أدخل الكابشن (اختياري)",
         "meta_upload_enter_caption_required": "أدخل النص/الكابشن الآن (إلزامي لأنك تخطيت الوسائط):",
         "meta_upload_publishing_now": "يقوم البوت بإرسال المنشور الآن، الرجاء الانتظار 🔄",
+        "meta_upload_publish_progress_fb_after_ig": (
+            "تم النشر على إنستغرام بنجاح ✅\n"
+            "جارٍ النشر على فيسبوك الآن… الرجاء الانتظار 🔄"
+        ),
         "meta_telethon_download_queue": (
             "يتم الآن تنزيل ملف كبير من تيليجرام لطلب نشر آخر. طلبك في الانتظار وسيكمل تلقائياً "
             "بعد انتهاء التنزيل، لا حاجة لإعادة الإرسال ⏳"
@@ -350,6 +354,10 @@ TEXTS = {
         "meta_upload_enter_caption_optional": "Enter caption (optional)",
         "meta_upload_enter_caption_required": "Enter the text/caption now (required because you skipped media):",
         "meta_upload_publishing_now": "The bot is publishing now, please wait 🔄",
+        "meta_upload_publish_progress_fb_after_ig": (
+            "Published to Instagram successfully ✅\n"
+            "Publishing to Facebook now… please wait 🔄"
+        ),
         "meta_telethon_download_queue": (
             "Another large file is being downloaded from Telegram for a different publish. "
             "Your request is queued and will continue automatically when that finishes — "

@@ -7,6 +7,7 @@ import time
 import uuid
 import aiohttp
 import models
+from telegram.error import TelegramError
 from Config import Config
 from common.lang_dicts import TEXTS
 from meta.errors import MetaPublishUserError, graph_error_detail
@@ -19,6 +20,31 @@ logger = logging.getLogger(__name__)
 
 def _max_telegram_media_bytes() -> int:
     return int(getattr(Config, "TELEGRAM_MEDIA_MAX_BYTES", 200 * 1024 * 1024))
+
+
+async def _edit_publish_progress_message(
+    context,
+    payload: dict[str, Any],
+    text_key: str,
+) -> None:
+    """Same chat/message as the initial «publishing now» edit (dual-platform flow)."""
+    spec = payload.get("publish_progress_edit")
+    if not spec or context is None:
+        return
+    chat_id = spec.get("chat_id")
+    message_id = spec.get("message_id")
+    if chat_id is None or message_id is None:
+        return
+    lang = payload.get("lang", models.Language.ARABIC)
+    text = TEXTS[lang][text_key]
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+        )
+    except TelegramError as e:
+        logger.debug("Publish progress message edit skipped: %s", e)
 
 
 async def _notify_telethon_download_queue(context, payload: dict[str, Any] | None) -> None:
@@ -380,6 +406,12 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
                     access_token=graph_token,
                 )
             )
+            if "facebook" in platforms:
+                await _edit_publish_progress_message(
+                    context,
+                    payload,
+                    "meta_upload_publish_progress_fb_after_ig",
+                )
 
         if "facebook" in platforms:
             logger.info("Publishing on Facebook: post_type=%s media_type=%s", post_type, media_type)

@@ -738,6 +738,12 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from meta.publish_notifications import send_publish_report  # noqa: F401
 
     if schedule_mode == "now":
+        pl_set = set(payload.get("platforms") or [])
+        if pl_set == {"instagram", "facebook"}:
+            payload["publish_progress_edit"] = {
+                "chat_id": update.effective_chat.id,
+                "message_id": update.effective_message.id,
+            }
         await update.callback_query.edit_message_text(
             text=TEXTS[lang]["meta_upload_publishing_now"],
         )
@@ -854,11 +860,7 @@ meta_upload_handler = ConversationHandler(
         ],
         GET_MEDIA: [
             MessageHandler(
-                filters=(
-                    filters.PHOTO
-                    | filters.VIDEO
-                    | VIDEO_AS_DOCUMENT_FILTER
-                )
+                filters=(filters.PHOTO | filters.VIDEO | VIDEO_AS_DOCUMENT_FILTER)
                 & ~filters.COMMAND,
                 callback=get_media,
             ),
