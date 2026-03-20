@@ -56,7 +56,7 @@ def _fb_only_payload(**overrides):
 
 
 def make_download(b: bytes):
-    async def _fn(_ctx, _fid):
+    async def _fn(_ctx, _payload):
         return b
 
     return _fn
@@ -220,7 +220,7 @@ async def test_publish_instagram_resumable_rupload_http_error(
 async def test_publish_instagram_video_missing_downloaded_bytes_raises(
     mock_context, publishers_texts, patch_meta_config
 ):
-    async def none_bytes(_c, _f):
+    async def none_bytes(_c, _p):
         return None
 
     with mock_ig_rupload_http():
@@ -441,7 +441,7 @@ async def test_publish_facebook_feed_video_formdata(
 async def test_publish_facebook_feed_missing_photo_bytes(
     mock_context, publishers_texts, patch_meta_config
 ):
-    async def none_photo(_c, _f):
+    async def none_photo(_c, _p):
         return None
 
     with (
@@ -464,7 +464,7 @@ async def test_publish_facebook_feed_missing_photo_bytes(
 async def test_publish_facebook_feed_missing_video_bytes(
     mock_context, publishers_texts, patch_meta_config
 ):
-    async def none_vid(_c, _f):
+    async def none_vid(_c, _p):
         return None
 
     with (
@@ -562,7 +562,7 @@ async def test_publish_facebook_reel_requires_video_media(mock_context):
 async def test_publish_facebook_reel_missing_video_bytes_after_download(
     mock_context, publishers_texts, patch_meta_config
 ):
-    async def none_vid(_c, _f):
+    async def none_vid(_c, _p):
         return None
 
     with (
@@ -653,7 +653,7 @@ async def test_publish_facebook_story_video_flow(
 async def test_publish_facebook_story_video_missing_bytes(
     mock_context, publishers_texts, patch_meta_config
 ):
-    async def none_v(_c, _f):
+    async def none_v(_c, _p):
         return None
 
     with (
@@ -759,7 +759,7 @@ async def test_publish_facebook_story_photo_flow(
 async def test_publish_facebook_story_photo_missing_bytes(
     mock_context, publishers_texts, patch_meta_config
 ):
-    async def none_p(_c, _f):
+    async def none_p(_c, _p):
         return None
 
     with (

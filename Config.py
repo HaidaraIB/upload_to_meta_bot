@@ -38,6 +38,13 @@ class Config:
     META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
     RUUPLOAD_BASE = os.getenv("RUUPLOAD_BASE", "https://rupload.facebook.com")
 
+    # Max Telegram media size to load into memory for Meta publish (Telethon path).
+    _max_mb_raw = os.getenv("TELEGRAM_MEDIA_MAX_MB", "200")
+    try:
+        TELEGRAM_MEDIA_MAX_BYTES = max(1, int(_max_mb_raw)) * 1024 * 1024
+    except ValueError:
+        TELEGRAM_MEDIA_MAX_BYTES = 200 * 1024 * 1024
+
     # Supabase Storage (for auto-providing Instagram image_url)
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")

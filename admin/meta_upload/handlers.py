@@ -288,6 +288,8 @@ async def get_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["meta_upload"]["media_type"] = media_type
     context.user_data["meta_upload"]["media_file_id"] = file_id
+    context.user_data["meta_upload"]["source_chat_id"] = update.effective_chat.id
+    context.user_data["meta_upload"]["source_message_id"] = update.message.message_id
 
     keyboard = build_caption_keyboard(lang)
     keyboard.append(build_back_button("back_to_get_media", lang=lang))

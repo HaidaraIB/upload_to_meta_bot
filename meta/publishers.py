@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from io import BytesIO
 from typing import Any
 import logging
 import time
@@ -13,12 +16,87 @@ from meta.supabase_storage import upload_bytes_public_url
 logger = logging.getLogger(__name__)
 
 
-async def _download_telegram_file(context, file_id: str) -> bytes:
-    logger.debug("Downloading Telegram file: file_id=%s", file_id)
-    tg_file = await context.bot.get_file(file_id)
+def _max_telegram_media_bytes() -> int:
+    return int(getattr(Config, "TELEGRAM_MEDIA_MAX_BYTES", 200 * 1024 * 1024))
+
+
+async def _download_via_telethon(chat_id: int, message_id: int, max_bytes: int) -> bytes:
+    """Download via MTProto (Telethon); supports files far above Bot API getFile ~20MB cap."""
+    from TeleClientSingleton import TeleClientSingleton
+
+    client = TeleClientSingleton()
+    msg = await client.get_messages(chat_id, ids=message_id)
+    if isinstance(msg, list):
+        msg = msg[0] if msg else None
+    if msg is None:
+        raise RuntimeError("telegram_message_not_found")
+
+    doc = getattr(msg, "document", None)
+    if doc is not None:
+        sz = getattr(doc, "size", None)
+        if sz is not None and sz > max_bytes:
+            raise MetaPublishUserError(
+                "meta_err_telegram_media_too_large",
+                max_mb=max_bytes // (1024 * 1024),
+            )
+
+    buf = BytesIO()
+    await client.download_media(msg, file=buf)
+    data = buf.getvalue()
+    if len(data) > max_bytes:
+        raise MetaPublishUserError(
+            "meta_err_telegram_media_too_large",
+            max_mb=max_bytes // (1024 * 1024),
+        )
+    return data
+
+
+async def _download_telegram_file(context, payload: dict[str, Any]) -> bytes:
+    media_file_id = payload.get("media_file_id")
+    max_bytes = _max_telegram_media_bytes()
+    chat_id = payload.get("source_chat_id")
+    message_id = payload.get("source_message_id")
+
+    if chat_id is not None and message_id is not None:
+        try:
+            data = await _download_via_telethon(
+                int(chat_id), int(message_id), max_bytes
+            )
+            logger.debug(
+                "Telethon download ok: chat_id=%s message_id=%s bytes=%s",
+                chat_id,
+                message_id,
+                len(data),
+            )
+            return data
+        except MetaPublishUserError:
+            raise
+        except Exception as e:
+            logger.warning(
+                "Telethon download failed (chat_id=%s message_id=%s): %s; trying Bot API",
+                chat_id,
+                message_id,
+                e,
+            )
+
+    if not media_file_id:
+        raise MetaPublishUserError(
+            "meta_err_telegram_download",
+            detail="missing media_file_id",
+        )
+
+    logger.debug("Downloading Telegram file via Bot API: file_id=%s", media_file_id)
+    tg_file = await context.bot.get_file(media_file_id)
     data = await tg_file.download_as_bytearray()
     b = bytes(data)
-    logger.debug("Downloaded Telegram file: file_id=%s bytes=%s", file_id, len(b))
+    if len(b) > max_bytes:
+        raise MetaPublishUserError(
+            "meta_err_telegram_media_too_large",
+            max_mb=max_bytes // (1024 * 1024),
+        )
+    logger.debug(
+        "Downloaded Telegram file via Bot API: file_id=%s bytes=%s", media_file_id, len(b)
+    )
     return b
 
 
@@ -213,9 +291,9 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
         photo_bytes = None
 
         if need_video_bytes:
-            video_bytes = await _download_telegram_file(context, media_file_id)
+            video_bytes = await _download_telegram_file(context, payload)
         if need_photo_bytes:
-            photo_bytes = await _download_telegram_file(context, media_file_id)
+            photo_bytes = await _download_telegram_file(context, payload)
 
         results: list[str] = []
 
