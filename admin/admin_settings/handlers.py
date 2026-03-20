@@ -238,7 +238,7 @@ add_admin_handler = ConversationHandler(
         SELECT_PERMISSIONS: [
             CallbackQueryHandler(
                 callback=toggle_permission,
-                pattern=r"^toggle_permission_[^_]+$",
+                pattern=r"^toggle_permission_",
             ),
             CallbackQueryHandler(
                 callback=skip_or_save_permissions,
@@ -439,13 +439,18 @@ async def show_admin_permissions(update: Update, context: ContextTypes.DEFAULT_T
                 models.Permission.MANAGE_FORCE_JOIN: TEXTS[lang].get(
                     "permission_manage_force_join", "Manage Force Join"
                 ),
-                models.Permission.VIEW_IDS: TEXTS[lang].get("permission_view_ids", "View IDs"),
-                    models.Permission.UPLOAD_TO_META: TEXTS[lang].get(
-                        "permission_upload_to_meta", "Upload to Meta"
-                    ),
-                    models.Permission.MANAGE_META_SETTINGS: TEXTS[lang].get(
-                        "permission_manage_meta_settings", "Manage Meta Settings"
-                    ),
+                models.Permission.VIEW_IDS: TEXTS[lang].get(
+                    "permission_view_ids", "View IDs"
+                ),
+                models.Permission.UPLOAD_TO_META: TEXTS[lang].get(
+                    "permission_upload_to_meta", "Upload to Meta"
+                ),
+                models.Permission.MANAGE_META_SETTINGS: TEXTS[lang].get(
+                    "permission_manage_meta_settings", "Manage Meta Settings"
+                ),
+                models.Permission.MANAGE_USERS: TEXTS[lang].get(
+                    "permission_manage_users", "Manage Users"
+                ),
             }
             for perm in selected_permissions:
                 permissions_text += f"✅ {permission_names.get(perm, perm.value)}\n"
@@ -484,7 +489,8 @@ async def toggle_admin_permission(update: Update, context: ContextTypes.DEFAULT_
                 s.query(models.AdminPermission)
                 .filter(
                     models.AdminPermission.admin_id == admin_id,
-                    models.AdminPermission.permission == models.Permission(permission_str),
+                    models.AdminPermission.permission
+                    == models.Permission(permission_str),
                 )
                 .first()
             )

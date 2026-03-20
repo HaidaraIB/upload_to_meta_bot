@@ -59,6 +59,9 @@ def build_permissions_keyboard(
         models.Permission.MANAGE_META_SETTINGS: BUTTONS[lang].get(
             "permission_manage_meta_settings", "Manage Meta Settings"
         ),
+        models.Permission.MANAGE_USERS: BUTTONS[lang].get(
+            "permission_manage_users", "Manage Users"
+        ),
     }
 
     for permission in models.Permission:
