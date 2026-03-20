@@ -116,6 +116,10 @@ TEXTS = {
         "meta_upload_enter_caption_optional": "أدخل الكابشن (اختياري)",
         "meta_upload_enter_caption_required": "أدخل النص/الكابشن الآن (إلزامي لأنك تخطيت الوسائط):",
         "meta_upload_publishing_now": "يقوم البوت بإرسال المنشور الآن، الرجاء الانتظار 🔄",
+        "meta_telethon_download_queue": (
+            "يتم الآن تنزيل ملف كبير من تيليجرام لطلب نشر آخر. طلبك في الانتظار وسيكمل تلقائياً "
+            "بعد انتهاء التنزيل، لا حاجة لإعادة الإرسال ⏳"
+        ),
         "meta_upload_enter_instagram_image_url": "لإنستجرام: أرسل `image_url` عام (يبدأ بـ http/https) للصورة:",
         "meta_upload_invalid_image_url": "URL غير صحيح. يجب أن يبدأ بـ http أو https ❌",
         "meta_upload_caption_required_if_no_media": "الكابشن إلزامي بدون وسائط ❗️",
@@ -229,6 +233,7 @@ TEXTS = {
         "excel_no": "لا",
         "lang_arabic": "العربية",
         "lang_english": "English",
+        "please_wait": "الرجاء الانتظار...",
     },
     models.Language.ENGLISH: {
         "user_welcome_msg": "Welcome...",
@@ -345,6 +350,11 @@ TEXTS = {
         "meta_upload_enter_caption_optional": "Enter caption (optional)",
         "meta_upload_enter_caption_required": "Enter the text/caption now (required because you skipped media):",
         "meta_upload_publishing_now": "The bot is publishing now, please wait 🔄",
+        "meta_telethon_download_queue": (
+            "Another large file is being downloaded from Telegram for a different publish. "
+            "Your request is queued and will continue automatically when that finishes — "
+            "no need to resend ⏳"
+        ),
         "meta_upload_enter_instagram_image_url": "For Instagram: send a public `image_url` (must start with http/https) for the image:",
         "meta_upload_invalid_image_url": "Invalid URL. Must start with http or https ❌",
         "meta_upload_caption_required_if_no_media": "Caption is required when there is no media ❗️",
@@ -459,6 +469,7 @@ TEXTS = {
         "excel_no": "No",
         "lang_arabic": "Arabic",
         "lang_english": "English",
+        "please_wait": "Please wait...",
     },
 }
 

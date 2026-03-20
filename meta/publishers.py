@@ -21,35 +21,76 @@ def _max_telegram_media_bytes() -> int:
     return int(getattr(Config, "TELEGRAM_MEDIA_MAX_BYTES", 200 * 1024 * 1024))
 
 
-async def _download_via_telethon(chat_id: int, message_id: int, max_bytes: int) -> bytes:
+async def _notify_telethon_download_queue(context, payload: dict[str, Any] | None) -> None:
+    """Tell the admin we're waiting on the shared Telethon download lock."""
+    if context is None or not payload:
+        return
+    admin_id = payload.get("admin_id")
+    if admin_id is None:
+        job = getattr(context, "job", None)
+        if job is not None:
+            admin_id = getattr(job, "user_id", None)
+    if admin_id is None:
+        return
+    lang = payload.get("lang", models.Language.ARABIC)
+    text = TEXTS[lang]["meta_telethon_download_queue"]
+    try:
+        await context.bot.send_message(chat_id=int(admin_id), text=text)
+    except Exception as e:
+        logger.debug("Telethon queue notice not sent: %s", e)
+
+
+async def _download_via_telethon(
+    context,
+    payload: dict[str, Any] | None,
+    tg_chat_id: int,
+    tg_message_id: int,
+    max_bytes: int,
+) -> bytes:
     """Download via MTProto (Telethon); supports files far above Bot API getFile ~20MB cap."""
     from TeleClientSingleton import TeleClientSingleton
 
-    client = await TeleClientSingleton.get_client()
-    msg = await client.get_messages(chat_id, ids=message_id)
-    if isinstance(msg, list):
-        msg = msg[0] if msg else None
-    if msg is None:
-        raise RuntimeError("telegram_message_not_found")
+    lock = TeleClientSingleton.download_lock
+    if lock.locked():
+        await _notify_telethon_download_queue(context, payload)
 
-    doc = getattr(msg, "document", None)
-    if doc is not None:
-        sz = getattr(doc, "size", None)
-        if sz is not None and sz > max_bytes:
+    async with lock:
+        logger.debug(
+            "Telethon download started (serialized): chat_id=%s message_id=%s",
+            tg_chat_id,
+            tg_message_id,
+        )
+        client = await TeleClientSingleton.get_client()
+        msg = await client.get_messages(tg_chat_id, ids=tg_message_id)
+        if isinstance(msg, list):
+            msg = msg[0] if msg else None
+        if msg is None:
+            raise RuntimeError("telegram_message_not_found")
+
+        doc = getattr(msg, "document", None)
+        if doc is not None:
+            sz = getattr(doc, "size", None)
+            if sz is not None and sz > max_bytes:
+                raise MetaPublishUserError(
+                    "meta_err_telegram_media_too_large",
+                    max_mb=max_bytes // (1024 * 1024),
+                )
+
+        buf = BytesIO()
+        await client.download_media(msg, file=buf)
+        data = buf.getvalue()
+        if len(data) > max_bytes:
             raise MetaPublishUserError(
                 "meta_err_telegram_media_too_large",
                 max_mb=max_bytes // (1024 * 1024),
             )
-
-    buf = BytesIO()
-    await client.download_media(msg, file=buf)
-    data = buf.getvalue()
-    if len(data) > max_bytes:
-        raise MetaPublishUserError(
-            "meta_err_telegram_media_too_large",
-            max_mb=max_bytes // (1024 * 1024),
+        logger.debug(
+            "Telethon download finished: chat_id=%s message_id=%s bytes=%s",
+            tg_chat_id,
+            tg_message_id,
+            len(data),
         )
-    return data
+        return data
 
 
 async def _download_telegram_file(context, payload: dict[str, Any]) -> bytes:
@@ -61,7 +102,7 @@ async def _download_telegram_file(context, payload: dict[str, Any]) -> bytes:
     if chat_id is not None and message_id is not None:
         try:
             data = await _download_via_telethon(
-                int(chat_id), int(message_id), max_bytes
+                context, payload, int(chat_id), int(message_id), max_bytes
             )
             logger.debug(
                 "Telethon download ok: chat_id=%s message_id=%s bytes=%s",

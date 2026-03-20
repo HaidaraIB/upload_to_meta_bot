@@ -6,6 +6,9 @@ from Config import Config
 class TeleClientSingleton:
     _instance: TelegramClient | None = None
     _lock = asyncio.Lock()
+    # One download at a time: shared MTProto client; overlapping GetFile/download_media
+    # causes errors and flood-wait churn if the user triggers another publish while one runs.
+    download_lock = asyncio.Lock()
 
     @classmethod
     async def get_client(cls) -> TelegramClient:

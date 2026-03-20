@@ -3,12 +3,7 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timedelta, timezone
 
-from telegram import (
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    ReplyKeyboardRemove,
-    Update,
-)
+from telegram import InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
@@ -16,6 +11,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.ext.filters import BaseFilter
 
 import models
 from Config import Config
@@ -53,6 +49,30 @@ from admin.meta_upload.keyboards import (
     PREVIEW,
 ) = range(9)
 
+_VIDEO_DOC_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
+
+
+def _video_document_file_id(msg) -> str | None:
+    """Telegram may send MP4/MOV as a document (file) instead of msg.video."""
+    d = getattr(msg, "document", None)
+    if not d:
+        return None
+    mt = (d.mime_type or "").lower()
+    if mt.startswith("video/"):
+        return d.file_id
+    name = (d.file_name or "").lower()
+    return d.file_id if any(name.endswith(s) for s in _VIDEO_DOC_SUFFIXES) else None
+
+
+class _VideoDocumentFilter(BaseFilter):
+    def filter(self, update: Update):
+        msg = update.effective_message
+        return bool(msg and _video_document_file_id(msg))
+
+
+# Single instance for MessageHandler (video sent as compressed file / document).
+VIDEO_AS_DOCUMENT_FILTER = _VideoDocumentFilter()
+
 
 def _get_media_from_message(msg):
     if msg.photo:
@@ -60,6 +80,9 @@ def _get_media_from_message(msg):
         return "photo", msg.photo[-1].file_id
     if msg.video:
         return "video", msg.video.file_id
+    vf = _video_document_file_id(msg)
+    if vf:
+        return "video", vf
     return None, None
 
 
@@ -146,6 +169,9 @@ async def meta_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update.effective_user.id)
 
     if not update.callback_query.data.startswith("back"):
+        await update.callback_query.edit_message_text(
+            text=TEXTS[lang]["please_wait"],
+        )
         # clear previous data
         context.user_data.pop("meta_upload", None)
         context.user_data["meta_upload"] = {}
@@ -828,7 +854,12 @@ meta_upload_handler = ConversationHandler(
         ],
         GET_MEDIA: [
             MessageHandler(
-                filters=(filters.PHOTO | filters.VIDEO) & ~filters.COMMAND,
+                filters=(
+                    filters.PHOTO
+                    | filters.VIDEO
+                    | VIDEO_AS_DOCUMENT_FILTER
+                )
+                & ~filters.COMMAND,
                 callback=get_media,
             ),
             CallbackQueryHandler(
