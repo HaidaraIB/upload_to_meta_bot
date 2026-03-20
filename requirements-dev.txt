@@ -1,0 +1,15 @@
+SQLAlchemy
+ptbcontrib @ git+https://github.com/python-telegram-bot/ptbcontrib.git@c58c52ecee33b0ab50dc9337d8553259e7a38e81
+python-telegram-bot
+python-telegram-bot[job-queue]
+python-telegram-bot[callback-data]
+python-dotenv
+pyrogram @ git+https://github.com/HaidaraIB/pyrogram.git
+telethon
+cryptg
+alembic
+openpyxl
+aiohttp
+pytest>=8.0
+pytest-asyncio>=0.24
+aioresponses>=0.7.6

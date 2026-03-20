@@ -14,11 +14,23 @@
    - `instagram_content_publish`
    - (قد يلزم) `business_management` إذا كنت تستخدم Business System User
 
+### صلاحية `pages_manage_posts` ورسالة «not available / App Review»
+ميتا قد تُرجع خطأ مثل: *The permission(s) pages_manage_posts are not available* — أي أن التطبيق **لم يُمنَح** هذه الصلاحية فعليًا في السياق الحالي:
+
+| وضع التطبيق | ماذا يعني عمليًا |
+|-------------|------------------|
+| **Development** | النشر يعمل عادة **فقط** لحسابات مضافة كـ **Admin / Developer / Tester** على نفس التطبيق في لوحة المطورين. تأكد أن حساب فيسبوك الذي تولّد منه التوكن له أحد هذه الأدوار، وأنك اخترت `pages_manage_posts` عند توليد التوكن (مثلاً من Graph API Explorer أو مسار Facebook Login). |
+| **Live** | لاستخدام النشر لحسابات عامة أو لعملاء، غالبًا تحتاج **App Review** وموافقة ميتا على `pages_manage_posts` (وأي صلاحيات أخرى تطلبها واجهة النشر). |
+
+بعد تعديل الصلاحيات أو أدوار المستخدمين، **أعد إصدار long-lived token** وحدّث `META_ACCESS_TOKEN` في `.env`.
+
 ## 2) تجهيز Token
 أضف long-lived token في ملف `.env` أو متغيرات البيئة باسم:
 - `META_ACCESS_TOKEN=<LONG_LIVED_ACCESS_TOKEN>`
 
 البوت يستخدم هذا الـ token لجلب Pages (`/me/accounts`) ثم ينشر نيابة عن الحسابات المتاحة له.
+
+**مهم لستوري فيسبوك (صورة):** رفع صورة ستوري يمرّ بمرحلة صورة غير منشورة (`published=false`). واجهة Graph تطلب أن يُنفَّذ ذلك **بتوكن الصفحة** وليس توكن المستخدم فقط. عند اختيار صفحة من البوت، يُخزَّن `access_token` الخاص بتلك الصفحة من استجابة `/me/accounts` ويُستخدم تلقائيًا للنشر — فتأكد أن التطبيق لديه صلاحية مثل `pages_manage_posts` حتى تُعاد `access_token` لكل صفحة.
 
 اختياري:
 - `META_GRAPH_VERSION=v25.0` (افتراضيًا v25.0 إن لم تحدده)
@@ -41,7 +53,44 @@
 - نوع الوسائط `photo`  
 فسيطلب منك البوت `image_url` عام يبدأ بـ `http/https` لأن Graph API لصور Instagram غالبًا يتطلب رابط عام أثناء `media` container creation.
 
-## 6) ملاحظات تشغيلية
+## 6) اختبارات Meta (pytest)
+
+**أين تذهب المخرجات؟** افتراضيًا كل ما يطبعه `pytest` (أسماء الاختبارات، نقاط، أخطاء، ملخص) يظهر **في الطرفية فقط** — لا يُكتب ملف تلقائيًا. اختبارات الوحدة **لا تستدعي Meta**؛ “الردود” الوحيدة هي استجابات **مزيّفة** داخل الذاكرة (mock / aioresponses)، وليست طلبات حقيقية.
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/unit          # بدون شبكة — graph_client + كل مسارات publish_to_meta (mock)
+pytest                     # نفس الوحدات + تكامل معطّل افتراضيًا
+```
+
+**حفظ نفس المخرجات في ملف (مع الاستمرار بالطباعة):**
+
+```powershell
+# من جذر المشروع، مع تفعيل .venv إن وُجد
+New-Item -ItemType Directory -Force -Path test-results | Out-Null
+.\.venv\Scripts\pytest.exe tests/unit -v --tb=short 2>&1 | Tee-Object -FilePath test-results\last-run.txt
+```
+
+**تقرير XML (مناسب لـ CI أو الأرشفة):**
+
+```powershell
+.\.venv\Scripts\pytest.exe tests/unit -v --tb=short --junitxml=test-results\junit.xml
+```
+
+أو تشغيل السكربت الجاهز (نص + XML معًا): `.\scripts\run_tests_save_log.ps1`
+
+مجلد `test-results/` مُدرَج في `.gitignore` ولن يُرفع إلى Git.
+
+لتشغيل اختبار حيّ ضد Graph API (قراءة `.env`):
+
+```bash
+set META_RUN_LIVE_TESTS=1
+pytest tests/integration -m integration
+```
+
+يحتاج `META_ACCESS_TOKEN`. لا يُنشر محتوى؛ يستدعي `list_business_assets` فقط.
+
+## 7) ملاحظات تشغيلية
 - تأكد أن الـ token قادر على الوصول للـ Pages الخاصة بك وأن Instagram Business المرتبط يظهر في قائمة Business Assets.
 - إذا فشل النشر لسبب صلاحيات/إذن ناقص، سيتم إظهار سبب الفشل للأدمن (وسيتم تسجيل تفاصيل في `errors.txt` عبر معالج الأخطاء).
 

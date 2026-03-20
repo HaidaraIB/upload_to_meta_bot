@@ -17,24 +17,31 @@ def build_post_type_keyboard(lang: models.Language = models.Language.ARABIC):
         ],
         [
             InlineKeyboardButton(
-                text=BUTTONS[lang]["post_type_regular"],
-                callback_data="post_type_regular",
+                text=BUTTONS[lang]["post_type_feed"],
+                callback_data="post_type_feed",
             )
         ],
     ]
 
 
-def build_platform_keyboard(lang: models.Language):
+def build_platform_keyboard(
+    lang: models.Language, *, text_only: bool = False
+):
+    """If text_only, only Facebook — Instagram Graph API needs photo/video."""
+    fb = InlineKeyboardButton(
+        text=BUTTONS[lang]["platform_facebook"],
+        callback_data="platform_facebook",
+    )
+    if text_only:
+        return [[fb]]
+
     return [
         [
             InlineKeyboardButton(
                 text=BUTTONS[lang]["platform_instagram"],
                 callback_data="platform_instagram",
             ),
-            InlineKeyboardButton(
-                text=BUTTONS[lang]["platform_facebook"],
-                callback_data="platform_facebook",
-            ),
+            fb,
         ],
         [
             InlineKeyboardButton(
@@ -60,7 +67,13 @@ def build_when_keyboard(lang: models.Language):
     ]
 
 
-def build_media_keyboard(lang: models.Language):
+def build_media_keyboard(lang: models.Language, *, post_type: str | None = None):
+    """
+    - feed: يسمح بـ text-only عبر skip_media (Facebook يحتاج caption/text).
+    - story/reel: يمنع text-only عبر عدم إظهار زر skip_media.
+    """
+    if post_type in ("story", "reel"):
+        return []
     return [
         [
             InlineKeyboardButton(
@@ -89,10 +102,6 @@ def build_preview_keyboard(lang: models.Language):
             InlineKeyboardButton(
                 text=BUTTONS[lang]["confirm_publish"],
                 callback_data="confirm_publish",
-            ),
-            InlineKeyboardButton(
-                text=BUTTONS[lang]["cancel_publish"],
-                callback_data="cancel_publish",
             ),
         ]
     ]

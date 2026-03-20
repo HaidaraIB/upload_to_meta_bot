@@ -31,7 +31,7 @@ class MetaPost(Base):
     instagram_user_name = sa.Column(sa.String, nullable=True)
 
     # Step 2/4/5 fields
-    post_type = sa.Column(sa.String, nullable=False)  # reel|story|regular
+    post_type = sa.Column(sa.String, nullable=False)  # reel|story|feed (feed post)
     media_type = sa.Column(sa.String, nullable=True)  # photo|video|None
     media_file_id = sa.Column(sa.String, nullable=True)  # Telegram file_id (source)
     instagram_image_url = sa.Column(sa.Text, nullable=True)  # required for IG photo

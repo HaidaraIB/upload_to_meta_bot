@@ -148,7 +148,7 @@ async def toggle_permission(update: Update, context: ContextTypes.DEFAULT_TYPE):
             permission = models.Permission(permission_str)
         except ValueError:
             await update.callback_query.answer(
-                text="Invalid permission", show_alert=True
+                text=TEXTS[lang]["invalid_permission"], show_alert=True
             )
             return
 

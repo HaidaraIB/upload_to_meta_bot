@@ -1,28 +1,61 @@
 from typing import Any
+import logging
+import time
+import uuid
 import aiohttp
 import models
 from Config import Config
 from common.lang_dicts import TEXTS
+from meta.errors import MetaPublishUserError, graph_error_detail
 from meta.graph_client import _graph_request
+from meta.supabase_storage import upload_bytes_public_url
+
+logger = logging.getLogger(__name__)
 
 
 async def _download_telegram_file(context, file_id: str) -> bytes:
+    logger.debug("Downloading Telegram file: file_id=%s", file_id)
     tg_file = await context.bot.get_file(file_id)
     data = await tg_file.download_as_bytearray()
-    return bytes(data)
+    b = bytes(data)
+    logger.debug("Downloaded Telegram file: file_id=%s bytes=%s", file_id, len(b))
+    return b
 
 
 async def _upload_to_rupload(
-    session: aiohttp.ClientSession, upload_url: str, file_bytes: bytes
+    session: aiohttp.ClientSession,
+    upload_url: str,
+    file_bytes: bytes,
+    *,
+    access_token: str | None = None,
 ) -> None:
+    # Avoid logging full URL (can include query params). Log only host and size.
+    from urllib.parse import urlparse
+
+    host = urlparse(upload_url).netloc or upload_url
+    logger.debug(
+        "Uploading to rupload: host=%s bytes=%s", host, len(file_bytes)
+    )
+    # Some Facebook upload endpoints (rupload) may require OAuth auth header.
     headers = {
+        "Authorization": f"OAuth {access_token or Config.META_ACCESS_TOKEN}",
         "offset": "0",
         "file_size": str(len(file_bytes)),
     }
     async with session.post(upload_url, headers=headers, data=file_bytes) as resp:
         if resp.status >= 400:
             body = await resp.text()
-            raise RuntimeError(f"Upload failed {resp.status}: {body}")
+            logger.warning(
+                "rupload upload failed: host=%s status=%s detail=%s",
+                host,
+                resp.status,
+                (body or "")[:250],
+            )
+            raise MetaPublishUserError(
+                "meta_err_upload",
+                status=resp.status,
+                detail=(body or "")[:400],
+            )
 
 
 async def _ig_create_container(
@@ -32,7 +65,16 @@ async def _ig_create_container(
     caption: str | None,
     upload_type: str | None = None,
     image_url: str | None = None,
+    *,
+    access_token: str | None = None,
 ) -> str:
+    logger.debug(
+        "IG create container: ig_user_id=%s media_type=%s upload_type=%s has_image_url=%s",
+        ig_user_id,
+        media_type,
+        upload_type,
+        bool(image_url),
+    )
     params: dict[str, Any] = {"media_type": media_type}
     if upload_type:
         params["upload_type"] = upload_type
@@ -46,10 +88,14 @@ async def _ig_create_container(
         "POST",
         f"/{ig_user_id}/media",
         params=params,
+        access_token=access_token,
     )
     creation_id = body.get("id")
     if not creation_id:
-        raise RuntimeError(f"IG container creation failed: {body}")
+        raise MetaPublishUserError(
+            "meta_err_ig_container",
+            detail=graph_error_detail(body),
+        )
     return str(creation_id)
 
 
@@ -58,23 +104,37 @@ async def _ig_upload_and_publish_video_resumable(
     ig_user_id: str,
     creation_id: str,
     video_bytes: bytes,
+    *,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
+    token = access_token or Config.META_ACCESS_TOKEN
     upload_url = f"{Config.RUUPLOAD_BASE}/ig-api-upload/{Config.META_GRAPH_VERSION}/{creation_id}"
+    logger.debug(
+        "IG resumable upload: ig_user_id=%s creation_id=%s bytes=%s",
+        ig_user_id,
+        creation_id,
+        len(video_bytes),
+    )
     headers = {
-        "Authorization": f"OAuth {Config.META_ACCESS_TOKEN}",
+        "Authorization": f"OAuth {token}",
         "offset": "0",
         "file_size": str(len(video_bytes)),
     }
     async with session.post(upload_url, headers=headers, data=video_bytes) as resp:
         if resp.status >= 400:
             body = await resp.text()
-            raise RuntimeError(f"IG resumable upload failed {resp.status}: {body}")
+            raise MetaPublishUserError(
+                "meta_err_ig_resumable_upload",
+                status=resp.status,
+                detail=(body or "")[:400],
+            )
 
     body = await _graph_request(
         session,
         "POST",
         f"/{ig_user_id}/media_publish",
         params={"creation_id": creation_id},
+        access_token=access_token,
     )
     return body
 
@@ -85,32 +145,66 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
     """
     platforms: list[str] = payload.get("platforms") or []
     page_id = str(payload["page_id"])
-    post_type = payload["post_type"]  # reel|story|regular
+    post_type = payload["post_type"]  # reel|story|feed (feed post)
     caption = payload.get("caption") or ""
     media_type = payload.get("media_type")
     media_file_id = payload.get("media_file_id")
     ig_user_id = str(payload.get("instagram_user_id") or "")
+    admin_id = payload.get("admin_id")
+    supabase_configured = all(
+        [
+            getattr(Config, "SUPABASE_URL", None),
+            getattr(Config, "SUPABASE_SERVICE_ROLE_KEY", None),
+            getattr(Config, "SUPABASE_STORAGE_BUCKET", None),
+        ]
+    )
 
     if not platforms:
-        raise ValueError("No platforms specified.")
+        raise MetaPublishUserError("meta_err_no_platforms")
+
+    graph_token = payload.get("page_access_token") or Config.META_ACCESS_TOKEN
 
     if post_type == "reel":
         if media_type != "video":
-            raise ValueError("Reel requires a video media.")
+            raise MetaPublishUserError("meta_err_reel_requires_video")
     if post_type == "story":
         if not media_type:
-            raise ValueError("Story requires media.")
-    if post_type == "regular":
+            raise MetaPublishUserError("meta_err_story_requires_media")
+    if post_type == "feed":
         if not media_type and "instagram" in platforms:
-            raise ValueError("Instagram requires media (no text-only).")
+            raise MetaPublishUserError("meta_err_instagram_no_text_only")
 
     # Determine what we need to download from Telegram.
     need_video_bytes = media_type == "video" and (
-        ("instagram" in platforms and post_type in ("reel", "story", "regular"))
-        or ("facebook" in platforms and post_type in ("reel", "story", "regular"))
+        ("instagram" in platforms and post_type in ("reel", "story", "feed"))
+        or ("facebook" in platforms and post_type in ("reel", "story", "feed"))
+    )
+    need_instagram_photo_bytes = (
+        media_type == "photo"
+        and post_type in ("feed", "story")
+        and "instagram" in platforms
+        and not payload.get("instagram_image_url")
+        and bool(media_file_id)
+        and supabase_configured
     )
     need_photo_bytes = media_type == "photo" and (
-        "facebook" in platforms and post_type in ("regular", "story")
+        ("facebook" in platforms and post_type in ("feed", "story"))
+        or need_instagram_photo_bytes
+    )
+    logger.info(
+        "publish_to_meta start: admin_id=%s page_id=%s post_type=%s platforms=%s media_type=%s caption_len=%s",
+        admin_id,
+        page_id,
+        post_type,
+        platforms,
+        media_type,
+        len(caption) if caption else 0,
+    )
+    logger.debug(
+        "publish_to_meta download plan: need_video=%s need_photo=%s has_media_file_id=%s",
+        need_video_bytes,
+        need_photo_bytes,
+        bool(media_file_id),
     )
 
     timeout = aiohttp.ClientTimeout(total=60)
@@ -125,7 +219,24 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
 
         results: list[str] = []
 
+        if need_instagram_photo_bytes and photo_bytes is not None:
+            # Upload to Supabase so Instagram can fetch it via a public URL.
+            object_path = (
+                f"ig_uploads/{admin_id or 'unknown'}/"
+                f"{int(time.time())}_{uuid.uuid4().hex}.jpg"
+            )
+            logger.info("Uploading IG photo bytes to Supabase: path=%s", object_path)
+            payload["instagram_image_url"] = await upload_bytes_public_url(
+                session=session,
+                bucket=Config.SUPABASE_STORAGE_BUCKET,
+                object_path=object_path,
+                content_type="image/jpeg",
+                file_bytes=photo_bytes,
+            )
+            logger.info("Supabase image_url ready for Instagram.")
+
         if "instagram" in platforms:
+            logger.info("Publishing on Instagram: post_type=%s media_type=%s", post_type, media_type)
             results.append(
                 await _publish_instagram(
                     session,
@@ -135,10 +246,12 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
                     media_type,
                     video_bytes,
                     payload,
+                    access_token=graph_token,
                 )
             )
 
         if "facebook" in platforms:
+            logger.info("Publishing on Facebook: post_type=%s media_type=%s", post_type, media_type)
             results.append(
                 await _publish_facebook(
                     session,
@@ -149,6 +262,7 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
                     video_bytes,
                     photo_bytes,
                     payload,
+                    access_token=graph_token,
                 )
             )
 
@@ -166,9 +280,11 @@ async def _publish_instagram(
     media_type: str | None,
     video_bytes: bytes | None,
     payload: dict[str, Any],
+    *,
+    access_token: str | None = None,
 ) -> str:
     if not ig_user_id:
-        raise ValueError("Missing Instagram user id.")
+        raise MetaPublishUserError("meta_err_missing_ig_user_id")
 
     lang = payload.get("lang", models.Language.ARABIC)
     platforms_caption = caption if caption else ""
@@ -176,16 +292,24 @@ async def _publish_instagram(
     media_type_map = {
         "reel": "REELS",
         "story": "STORIES",
-        "regular": "VIDEO",  # regular video feed
+        # For Instagram resumable uploads, "VIDEO" can return Invalid parameter.
+        # Use "REELS" for feed video as well.
+        "feed": "REELS",
     }
 
-    if post_type in ("reel", "story") or (
-        post_type == "regular" and media_type == "video"
-    ):
+    # Video-based Instagram publishing.
+    # Reels always require video, and Stories/Feed use video when `media_type == "video"`.
+    # If `post_type == "story"` with `media_type == "photo"`, we must go through the photo branch.
+    if media_type == "video" and post_type in ("reel", "story", "feed"):
+        logger.info(
+            "Instagram video branch: post_type=%s ig_media_type=%s",
+            post_type,
+            media_type_map.get(post_type),
+        )
         if media_type != "video":
-            raise ValueError("Instagram requires video bytes for this post type.")
+            raise MetaPublishUserError("meta_err_ig_requires_video")
         if video_bytes is None:
-            raise ValueError("Missing downloaded video bytes for Instagram.")
+            raise MetaPublishUserError("meta_err_ig_missing_video_bytes")
 
         ig_media_type = media_type_map[post_type]
         creation_id = await _ig_create_container(
@@ -194,29 +318,34 @@ async def _publish_instagram(
             media_type=ig_media_type,
             caption=platforms_caption if platforms_caption else None,
             upload_type="resumable",
+            access_token=access_token,
         )
         await _ig_upload_and_publish_video_resumable(
             session=session,
             ig_user_id=ig_user_id,
             creation_id=creation_id,
             video_bytes=video_bytes,
+            access_token=access_token,
         )
-        return TEXTS[lang].get(
-            "meta_upload_publish_ok_instagram", "Instagram published successfully ✅"
-        )
+        return TEXTS[lang]["meta_upload_publish_ok_instagram"]
 
     # Photo branch
     if media_type != "photo":
-        raise ValueError("Instagram requires a photo for photo-based posts.")
+        raise MetaPublishUserError("meta_err_ig_requires_photo")
 
     image_url = payload.get("instagram_image_url")
     if not image_url:
-        raise ValueError("Missing instagram_image_url for photo publishing.")
+        raise MetaPublishUserError("meta_err_ig_missing_image_url")
 
     if post_type == "story":
         ig_media_type = "STORIES"
     else:
         ig_media_type = "IMAGE"
+    logger.info(
+        "Instagram photo branch: post_type=%s ig_media_type=%s",
+        post_type,
+        ig_media_type,
+    )
 
     creation_id = await _ig_create_container(
         session=session,
@@ -224,16 +353,16 @@ async def _publish_instagram(
         media_type=ig_media_type,
         caption=platforms_caption if platforms_caption else None,
         image_url=image_url,
+        access_token=access_token,
     )
     await _graph_request(
         session,
         "POST",
         f"/{ig_user_id}/media_publish",
         params={"creation_id": creation_id},
+        access_token=access_token,
     )
-    return TEXTS[lang].get(
-        "meta_upload_publish_ok_instagram", "Instagram published successfully ✅"
-    )
+    return TEXTS[lang]["meta_upload_publish_ok_instagram"]
 
 
 async def _publish_facebook(
@@ -245,26 +374,29 @@ async def _publish_facebook(
     video_bytes: bytes | None,
     photo_bytes: bytes | None,
     payload: dict[str, Any],
+    *,
+    access_token: str | None = None,
 ) -> str:
     lang = payload.get("lang", models.Language.ARABIC)
 
-    if post_type == "regular":
+    if post_type == "feed":
         if not media_type:
+            logger.info("Facebook feed text-only branch.")
             if not caption:
-                raise ValueError("Facebook text-only post requires caption/text.")
+                raise MetaPublishUserError("meta_err_fb_text_requires_caption")
             await _graph_request(
                 session,
                 "POST",
                 f"/{page_id}/feed",
                 params={"message": caption, "published": "true"},
+                access_token=access_token,
             )
-            return TEXTS[lang].get(
-                "meta_upload_publish_ok_facebook", "Facebook published successfully ✅"
-            )
+            return TEXTS[lang]["meta_upload_publish_ok_facebook"]
 
         if media_type == "photo":
+            logger.info("Facebook feed photo branch.")
             if photo_bytes is None:
-                raise ValueError("Missing photo bytes for Facebook.")
+                raise MetaPublishUserError("meta_err_fb_missing_photo_bytes")
 
             form = aiohttp.FormData()
             form.add_field(
@@ -278,14 +410,14 @@ async def _publish_facebook(
                 "POST",
                 f"/{page_id}/photos",
                 data=form,
+                access_token=access_token,
             )
-            return TEXTS[lang].get(
-                "meta_upload_publish_ok_facebook", "Facebook published successfully ✅"
-            )
+            return TEXTS[lang]["meta_upload_publish_ok_facebook"]
 
         if media_type == "video":
+            logger.info("Facebook feed video branch.")
             if video_bytes is None:
-                raise ValueError("Missing video bytes for Facebook.")
+                raise MetaPublishUserError("meta_err_fb_missing_video_bytes")
             form = aiohttp.FormData()
             form.add_field(
                 "source", video_bytes, filename="video.mp4", content_type="video/mp4"
@@ -299,16 +431,16 @@ async def _publish_facebook(
                 "POST",
                 f"/{page_id}/videos",
                 data=form,
+                access_token=access_token,
             )
-            return TEXTS[lang].get(
-                "meta_upload_publish_ok_facebook", "Facebook published successfully ✅"
-            )
+            return TEXTS[lang]["meta_upload_publish_ok_facebook"]
 
-        raise ValueError("Unsupported media_type for Facebook regular.")
+        raise MetaPublishUserError("meta_err_fb_unsupported_feed_media")
 
     if post_type == "reel":
+        logger.info("Facebook reel branch.")
         if media_type != "video" or video_bytes is None:
-            raise ValueError("Reel requires video for Facebook.")
+            raise MetaPublishUserError("meta_err_fb_reel_requires_video")
 
         # Video Reels flow: START -> upload -> FINISH
         start_body = await _graph_request(
@@ -320,13 +452,19 @@ async def _publish_facebook(
                 "video_state": "PUBLISHED",
                 "description": caption or "",
             },
+            access_token=access_token,
         )
         video_id = start_body.get("video_id")
         upload_url = start_body.get("upload_url")
         if not video_id or not upload_url:
-            raise RuntimeError(f"Facebook reel init failed: {start_body}")
+            raise MetaPublishUserError(
+                "meta_err_fb_reel_init",
+                detail=graph_error_detail(start_body),
+            )
 
-        await _upload_to_rupload(session, upload_url, video_bytes)
+        await _upload_to_rupload(
+            session, upload_url, video_bytes, access_token=access_token
+        )
 
         await _graph_request(
             session,
@@ -338,43 +476,49 @@ async def _publish_facebook(
                 "video_state": "PUBLISHED",
                 "description": caption or "",
             },
+            access_token=access_token,
         )
-        return TEXTS[lang].get(
-            "meta_upload_publish_ok_facebook", "Facebook reel published successfully ✅"
-        )
+        return TEXTS[lang]["meta_upload_publish_ok_facebook_reel"]
 
     if post_type == "story":
+        logger.info("Facebook story branch.")
         if not media_type:
-            raise ValueError("Story requires media for Facebook.")
+            raise MetaPublishUserError("meta_err_fb_story_requires_media")
 
         if media_type == "video":
+            logger.info("Facebook story video branch.")
             if video_bytes is None:
-                raise ValueError("Missing video bytes for Facebook story.")
+                raise MetaPublishUserError("meta_err_fb_story_missing_video_bytes")
             init = await _graph_request(
                 session,
                 "POST",
                 f"/{page_id}/video_stories",
                 params={"upload_phase": "start", "description": caption or ""},
+                access_token=access_token,
             )
             video_id = init.get("video_id")
             upload_url = init.get("upload_url")
             if not video_id or not upload_url:
-                raise RuntimeError(f"Facebook story init failed: {init}")
-            await _upload_to_rupload(session, upload_url, video_bytes)
+                raise MetaPublishUserError(
+                    "meta_err_fb_story_init",
+                    detail=graph_error_detail(init),
+                )
+            await _upload_to_rupload(
+                session, upload_url, video_bytes, access_token=access_token
+            )
             await _graph_request(
                 session,
                 "POST",
                 f"/{page_id}/video_stories",
                 params={"upload_phase": "finish", "video_id": video_id},
+                access_token=access_token,
             )
-            return TEXTS[lang].get(
-                "meta_upload_publish_ok_facebook",
-                "Facebook story published successfully ✅",
-            )
+            return TEXTS[lang]["meta_upload_publish_ok_facebook_story"]
 
         if media_type == "photo":
+            logger.info("Facebook story photo branch.")
             if photo_bytes is None:
-                raise ValueError("Missing photo bytes for Facebook story.")
+                raise MetaPublishUserError("meta_err_fb_story_missing_photo_bytes")
 
             # Upload photo (unpublished) to /photos, include message so story inherits it.
             form = aiohttp.FormData()
@@ -391,22 +535,26 @@ async def _publish_facebook(
                 "POST",
                 f"/{page_id}/photos",
                 data=form,
+                access_token=access_token,
             )
             photo_id = upload.get("id")
             if not photo_id:
-                raise RuntimeError(f"Facebook story photo upload failed: {upload}")
+                raise MetaPublishUserError(
+                    "meta_err_fb_story_photo",
+                    detail=graph_error_detail(upload),
+                )
 
             await _graph_request(
                 session,
                 "POST",
                 f"/{page_id}/photo_stories",
                 params={"photo_id": photo_id},
+                access_token=access_token,
             )
-            return TEXTS[lang].get(
-                "meta_upload_publish_ok_facebook",
-                "Facebook story published successfully ✅",
-            )
+            return TEXTS[lang]["meta_upload_publish_ok_facebook_story"]
 
-        raise ValueError("Unsupported media_type for Facebook story.")
+        raise MetaPublishUserError("meta_err_fb_unsupported_story_media")
 
-    raise ValueError(f"Unsupported post type: {post_type}")
+    raise MetaPublishUserError(
+        "meta_err_unsupported_post_type", post_type=post_type
+    )

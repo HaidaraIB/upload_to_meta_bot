@@ -18,6 +18,7 @@ from telegram.ext import (
 )
 
 import models
+from Config import Config
 from common.back_to_home_page import back_to_admin_home_page_handler
 from common.keyboards import (
     build_admin_keyboard,
@@ -25,7 +26,7 @@ from common.keyboards import (
     build_back_to_home_page_button,
     build_keyboard,
 )
-from common.lang_dicts import TEXTS, get_lang
+from common.lang_dicts import BUTTONS, TEXTS, get_lang
 from custom_filters import PermissionFilter, PrivateChatAndAdmin
 from models import GeneralSettings, Permission
 from start import admin_command
@@ -62,26 +63,73 @@ def _get_media_from_message(msg):
     return None, None
 
 
+def _meta_upload_is_text_only(meta: dict) -> bool:
+    return not meta.get("media_type") or not meta.get("media_file_id")
+
+
+_POST_TYPE_TO_BUTTON_KEY = {
+    "reel": "post_type_reel",
+    "story": "post_type_story",
+    "feed": "post_type_feed",
+    "regular": "post_type_feed",
+}
+
+_PLATFORM_TO_BUTTON_KEY = {
+    "instagram": "platform_instagram",
+    "facebook": "platform_facebook",
+}
+
+
+def _format_preview_post_type(lang, post_type: str | None) -> str:
+    if not post_type:
+        return "—"
+    key = _POST_TYPE_TO_BUTTON_KEY.get(post_type)
+    if key:
+        return BUTTONS[lang][key]
+    return post_type
+
+
+def _format_preview_platforms(lang, platforms: list[str] | str | None) -> str:
+    if not platforms:
+        return "—"
+    if isinstance(platforms, str):
+        platforms = ["instagram", "facebook"] if platforms == "both" else [platforms]
+    if set(platforms) == {"instagram", "facebook"}:
+        return BUTTONS[lang]["platform_both"]
+    sep = "، " if lang == models.Language.ARABIC else ", "
+    parts: list[str] = []
+    for p in platforms:
+        key = _PLATFORM_TO_BUTTON_KEY.get(p)
+        parts.append(BUTTONS[lang][key] if key else p)
+    return sep.join(parts)
+
+
+def _format_preview_media(lang, media_type: str | None) -> str:
+    if not media_type:
+        return TEXTS[lang]["meta_upload_preview_media_text"]
+    if media_type == "photo":
+        return TEXTS[lang]["meta_upload_preview_media_photo"]
+    if media_type == "video":
+        return TEXTS[lang]["meta_upload_preview_media_video"]
+    return media_type
+
+
 def _build_preview_text(lang, data: dict):
     page_name = data["page_name"]
-    post_type = data["post_type"]
-    platforms = data["platforms"]
-    media_type = data.get("media_type") or "text"
+    post_type_label = _format_preview_post_type(lang, data.get("post_type"))
+    platforms_label = _format_preview_platforms(lang, data.get("platforms"))
+    media_label = _format_preview_media(lang, data.get("media_type"))
     caption = data.get("caption")
     when_label = data["when_label"]
 
-    caption_text = (
-        caption
-        if caption
-        else ("(بدون caption)" if lang == models.Language.ARABIC else "(no caption)")
-    )
+    caption_text = caption if caption else TEXTS[lang]["meta_upload_preview_no_caption"]
 
     return (
         f"<b>{TEXTS[lang]['meta_upload_preview_title']}</b>\n\n"
         f"{TEXTS[lang]['meta_upload_preview_page']}: {page_name}\n"
-        f"{TEXTS[lang]['meta_upload_preview_post_type']}: {post_type}\n"
-        f"{TEXTS[lang]['meta_upload_preview_platforms']}: {', '.join(platforms)}\n"
-        f"{TEXTS[lang]['meta_upload_preview_media']}: {media_type}\n"
+        f"{TEXTS[lang]['meta_upload_preview_post_type']}: {post_type_label}\n"
+        f"{TEXTS[lang]['meta_upload_preview_platforms']}: {platforms_label}\n"
+        f"{TEXTS[lang]['meta_upload_preview_media']}: {media_label}\n"
         f"{TEXTS[lang]['meta_upload_preview_caption']}: {caption_text}\n"
         f"{TEXTS[lang]['meta_upload_preview_when']}: {when_label}\n\n"
         f"{TEXTS[lang]['meta_upload_preview_confirmation_hint']}"
@@ -97,21 +145,32 @@ async def meta_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lang = get_lang(update.effective_user.id)
 
-    # clear previous data
-    context.user_data.pop("meta_upload", None)
-    context.user_data["meta_upload"] = {}
+    if not update.callback_query.data.startswith("back"):
+        # clear previous data
+        context.user_data.pop("meta_upload", None)
+        context.user_data["meta_upload"] = {}
 
-    from meta.graph_client import list_business_assets  # lazy import
+        from meta.errors import format_meta_publish_failure
+        from meta.graph_client import list_business_assets  # lazy import
 
-    assets = await list_business_assets()
-    if not assets:
-        await update.callback_query.edit_message_text(
-            text=TEXTS[lang]["meta_upload_no_assets"],
-            reply_markup=build_admin_keyboard(lang, update.effective_user.id),
-        )
-        return ConversationHandler.END
+        try:
+            assets = await list_business_assets()
+        except Exception as e:
+            await update.callback_query.edit_message_text(
+                text=format_meta_publish_failure(e, lang),
+                reply_markup=build_admin_keyboard(lang, update.effective_user.id),
+            )
+            return ConversationHandler.END
+        if not assets:
+            await update.callback_query.answer(
+                text=TEXTS[lang]["meta_upload_no_assets"],
+                show_alert=True,
+            )
+            return ConversationHandler.END
 
-    context.user_data["meta_upload"]["assets"] = assets
+        context.user_data["meta_upload"]["assets"] = assets
+    else:
+        assets = context.user_data["meta_upload"]["assets"]
 
     # One-column keyboard with each page as a separate button.
     keyboard = build_keyboard(
@@ -136,7 +195,10 @@ async def select_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     lang = get_lang(update.effective_user.id)
-    page_id = update.callback_query.data.replace("select_page_", "")
+    if not update.callback_query.data.startswith("back"):
+        page_id = update.callback_query.data.replace("select_page_", "")
+    else:
+        page_id = context.user_data["meta_upload"].get("page_id")
 
     meta_data = context.user_data.get("meta_upload", {})
     assets = meta_data.get("assets", [])
@@ -150,6 +212,9 @@ async def select_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["meta_upload"]["page_id"] = asset["page_id"]
     context.user_data["meta_upload"]["page_name"] = (
         asset.get("label") or asset["page_name"]
+    )
+    context.user_data["meta_upload"]["page_access_token"] = asset.get(
+        "page_access_token"
     )
     context.user_data["meta_upload"]["instagram_user_id"] = asset["instagram_user_id"]
     context.user_data["meta_upload"]["instagram_user_name"] = asset[
@@ -182,7 +247,8 @@ async def select_post_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "post_type_", ""
         )
 
-    keyboard = build_media_keyboard(lang)
+    post_type = context.user_data["meta_upload"].get("post_type")
+    keyboard = build_media_keyboard(lang, post_type=post_type)
     keyboard.append(build_back_button("back_to_select_post_type", lang=lang))
     keyboard.append(build_back_to_home_page_button(lang=lang, is_admin=True)[0])
     await update.callback_query.edit_message_text(
@@ -211,9 +277,17 @@ async def get_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return GET_MEDIA
 
-    if not update.callback_query.data.startswith("back"):
-        context.user_data["meta_upload"]["media_type"] = media_type
-        context.user_data["meta_upload"]["media_file_id"] = file_id
+    # Reels always require video.
+    post_type = context.user_data["meta_upload"].get("post_type")
+    if post_type == "reel" and media_type != "video":
+        await update.message.reply_text(
+            text=TEXTS[lang]["meta_err_reel_requires_video"],
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return GET_MEDIA
+
+    context.user_data["meta_upload"]["media_type"] = media_type
+    context.user_data["meta_upload"]["media_file_id"] = file_id
 
     keyboard = build_caption_keyboard(lang)
     keyboard.append(build_back_button("back_to_get_media", lang=lang))
@@ -233,6 +307,19 @@ async def skip_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     lang = get_lang(update.effective_user.id)
     if not update.callback_query.data.startswith("back"):
+        post_type = context.user_data["meta_upload"].get("post_type")
+        if post_type == "reel":
+            await update.callback_query.answer(
+                text=TEXTS[lang]["meta_err_reel_requires_video"],
+                show_alert=True,
+            )
+            return GET_MEDIA
+        if post_type == "story":
+            await update.callback_query.answer(
+                text=TEXTS[lang]["meta_err_story_requires_media"],
+                show_alert=True,
+            )
+            return GET_MEDIA
         context.user_data["meta_upload"]["media_type"] = None
         context.user_data["meta_upload"]["media_file_id"] = None
     back_buttons = [
@@ -258,25 +345,32 @@ async def get_caption_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update.effective_user.id)
 
     if update.message:
-        media_type = context.user_data["meta_upload"]["media_type"]
-        media_file_id = context.user_data["meta_upload"]["media_file_id"]
+        media_type = context.user_data["meta_upload"].get("media_type")
+        media_file_id = context.user_data["meta_upload"].get("media_file_id")
         if not media_type or not media_file_id:
             back_data = "back_to_get_required_caption"
         else:
             back_data = "back_to_get_optional_caption"
         context.user_data["meta_upload"]["caption"] = update.message.text.strip()
 
-    keyboard = build_platform_keyboard(lang)
+    mu = context.user_data["meta_upload"]
+    text_only = _meta_upload_is_text_only(mu)
+    platform_prompt = (
+        TEXTS[lang]["meta_upload_choose_platform_text_only"]
+        if text_only
+        else TEXTS[lang]["meta_upload_choose_platform"]
+    )
+    keyboard = build_platform_keyboard(lang, text_only=text_only)
     keyboard.append(build_back_button(back_data, lang=lang))
     keyboard.append(build_back_to_home_page_button(lang=lang, is_admin=True)[0])
     if update.message:
         await update.message.reply_text(
-            text=TEXTS[lang]["meta_upload_choose_platform"],
+            text=platform_prompt,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     else:
         await update.callback_query.edit_message_text(
-            text=TEXTS[lang]["meta_upload_choose_platform"],
+            text=platform_prompt,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     return CHOOSE_PLATFORM
@@ -291,8 +385,8 @@ async def skip_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update.effective_user.id)
 
     if not update.callback_query.data.startswith("back"):
-        media_type = context.user_data["meta_upload"]["media_type"]
-        media_file_id = context.user_data["meta_upload"]["media_file_id"]
+        media_type = context.user_data["meta_upload"].get("media_type")
+        media_file_id = context.user_data["meta_upload"].get("media_file_id")
         if not media_type or not media_file_id:
             await update.callback_query.answer(
                 text=TEXTS[lang]["meta_upload_caption_required_if_no_media"],
@@ -301,7 +395,7 @@ async def skip_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return GET_CAPTION
         context.user_data["meta_upload"]["caption"] = ""
 
-    keyboard = build_platform_keyboard(lang)
+    keyboard = build_platform_keyboard(lang, text_only=False)
     keyboard.append(build_back_button("back_to_get_optional_caption", lang=lang))
     keyboard.append(build_back_to_home_page_button(lang=lang, is_admin=True)[0])
     await update.callback_query.edit_message_text(
@@ -324,16 +418,37 @@ async def choose_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update.effective_user.id)
 
     if not update.callback_query.data.startswith("back"):
-        context.user_data["meta_upload"]["platforms"] = (
-            update.callback_query.data.replace("platform_", "")
-        )
+        chosen = update.callback_query.data.replace("platform_", "")
+        context.user_data["meta_upload"]["platforms"] = chosen
     else:
-        chosen = context.user_data["meta_upload"]["platforms"]
+        chosen = context.user_data["meta_upload"].get("platforms")
 
     if chosen == "both":
         platforms = ["instagram", "facebook"]
     else:
         platforms = [chosen]
+
+    context.user_data["meta_upload"]["platforms"] = platforms
+
+    post_type = context.user_data["meta_upload"].get("post_type")
+    text_only = _meta_upload_is_text_only(context.user_data["meta_upload"])
+    if text_only and post_type in ("story", "reel"):
+        err_key = (
+            "meta_err_reel_requires_video"
+            if post_type == "reel"
+            else "meta_err_story_requires_media"
+        )
+        await update.callback_query.answer(
+            text=TEXTS[lang][err_key],
+            show_alert=True,
+        )
+        return GET_MEDIA
+    if text_only and "instagram" in platforms:
+        await update.callback_query.answer(
+            text=TEXTS[lang]["meta_upload_text_only_no_instagram"],
+            show_alert=True,
+        )
+        return CHOOSE_PLATFORM
 
     # Validate Instagram availability if requested
     if "instagram" in platforms and not context.user_data["meta_upload"].get(
@@ -345,21 +460,30 @@ async def choose_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return CHOOSE_PLATFORM
 
-    context.user_data["meta_upload"]["platforms"] = platforms
+    back_buttons = [
+        build_back_button("back_to_choose_platform", lang=lang),
+        build_back_to_home_page_button(lang=lang, is_admin=True)[0],
+    ]
 
-    # Instagram photo publishing requires public `image_url`.
+    # Instagram photo publishing requires a public `image_url`.
+    # If Supabase Storage is configured, we upload the Telegram photo automatically and skip the manual step.
     if (
         "instagram" in platforms
         and context.user_data["meta_upload"].get("media_type") == "photo"
     ):
-        back_buttons = [
-            build_back_button("back_to_choose_platform", lang=lang),
-            build_back_to_home_page_button(lang=lang, is_admin=True)[0],
-        ]
-        await update.callback_query.edit_message_text(
-            text=TEXTS[lang]["meta_upload_enter_instagram_image_url"],
+        supabase_configured = all(
+            [
+                Config.SUPABASE_URL,
+                Config.SUPABASE_SERVICE_ROLE_KEY,
+                Config.SUPABASE_STORAGE_BUCKET,
+            ]
         )
-        return GET_IMAGE_URL
+        if not supabase_configured:
+            await update.callback_query.edit_message_text(
+                text=TEXTS[lang]["meta_upload_enter_instagram_image_url"],
+                reply_markup=InlineKeyboardMarkup(back_buttons),
+            )
+            return GET_IMAGE_URL
 
     keyboard = build_when_keyboard(lang)
     keyboard.extend(back_buttons)
@@ -408,10 +532,6 @@ async def get_instagram_image_url(update: Update, context: ContextTypes.DEFAULT_
 back_to_get_instagram_image_url = choose_platform
 
 
-def _format_platforms_for_preview(platforms: list[str]) -> list[str]:
-    return [p.capitalize() for p in platforms]
-
-
 async def choose_when(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (
         PrivateChatAndAdmin().filter(update)
@@ -424,7 +544,7 @@ async def choose_when(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.callback_query.data.startswith("back"):
         context.user_data["meta_upload"]["schedule_mode"] = chosen  # now|schedule
 
-    if context.user_data["meta_upload"]["instagram_image_url"]:
+    if context.user_data["meta_upload"].get("instagram_image_url"):
         back_data = "back_to_choose_when_image_url"
     else:
         back_data = "back_to_choose_when"
@@ -434,21 +554,20 @@ async def choose_when(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if chosen == "now":
         keyboard = build_preview_keyboard(lang)
+        keyboard.extend(back_buttons)
         await update.callback_query.edit_message_text(
             text=_build_preview_text(
                 lang,
                 {
-                    "page_name": context.user_data["meta_upload"]["page_name"],
-                    "post_type": context.user_data["meta_upload"]["post_type"],
-                    "platforms": _format_platforms_for_preview(
-                        context.user_data["meta_upload"]["platforms"]
-                    ),
+                    "page_name": context.user_data["meta_upload"].get("page_name"),
+                    "post_type": context.user_data["meta_upload"].get("post_type"),
+                    "platforms": context.user_data["meta_upload"].get("platforms"),
                     "media_type": context.user_data["meta_upload"].get("media_type"),
                     "caption": context.user_data["meta_upload"].get("caption"),
                     "when_label": TEXTS[lang]["meta_upload_when_now_label"],
                 },
             ),
-            reply_markup=InlineKeyboardMarkup(back_buttons),
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return PREVIEW
 
@@ -476,7 +595,7 @@ async def enter_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw = update.message.text.strip()
         context.user_data["meta_upload"]["scheduled_utc_raw"] = raw
     else:
-        raw = context.user_data["meta_upload"]["scheduled_utc_raw"]
+        raw = context.user_data["meta_upload"].get("scheduled_utc_raw")
     try:
         local_dt = datetime.strptime(raw, "%Y-%m-%d %H:%M")
     except ValueError:
@@ -498,11 +617,9 @@ async def enter_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = _build_preview_text(
         lang,
         {
-            "page_name": context.user_data["meta_upload"]["page_name"],
-            "post_type": context.user_data["meta_upload"]["post_type"],
-            "platforms": _format_platforms_for_preview(
-                context.user_data["meta_upload"]["platforms"]
-            ),
+            "page_name": context.user_data["meta_upload"].get("page_name"),
+            "post_type": context.user_data["meta_upload"].get("post_type"),
+            "platforms": context.user_data["meta_upload"].get("platforms"),
             "media_type": context.user_data["meta_upload"].get("media_type"),
             "caption": context.user_data["meta_upload"].get("caption"),
             "when_label": raw,
@@ -539,6 +656,8 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payload = copy.deepcopy(context.user_data["meta_upload"])
     payload["admin_id"] = update.effective_user.id
     payload["lang"] = lang
+    # Do not pass every page token (full assets list) into jobs / long-lived copies.
+    payload.pop("assets", None)
 
     # Convert isoformat for scheduled
     if payload.get("scheduled_utc"):
@@ -590,6 +709,9 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from meta.publishers import publish_to_meta  # noqa: F401
 
     if schedule_mode == "now":
+        await update.callback_query.edit_message_text(
+            text=TEXTS[lang]["meta_upload_publishing_now"],
+        )
         try:
             result = await publish_to_meta(payload=payload, context=context)
             with models.session_scope() as s:
@@ -606,6 +728,8 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
             )
         except Exception as e:
+            from meta.errors import format_meta_publish_failure
+
             with models.session_scope() as s:
                 meta_post = s.get(models.MetaPost, meta_post_id)
                 if meta_post:
@@ -614,7 +738,7 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     meta_post.last_error = str(e)
 
             await update.callback_query.edit_message_text(
-                text=TEXTS[lang]["meta_upload_publish_failed"].format(err=str(e)),
+                text=format_meta_publish_failure(e, lang),
                 reply_markup=build_admin_keyboard(
                     lang, user_id=update.effective_user.id
                 ),
@@ -639,9 +763,22 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "misfire_grace_time": None,
         },
     )
+    # Log scheduling so we can correlate execution logs with the user request.
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "Scheduled publish queued: meta_post_id=%s user_id=%s page_id=%s post_type=%s platforms=%s when=%s",
+        meta_post_id,
+        update.effective_user.id,
+        payload.get("page_id"),
+        payload.get("post_type"),
+        payload.get("platforms"),
+        scheduled_dt.isoformat() if scheduled_dt else None,
+    )
     await update.callback_query.edit_message_text(
         text=TEXTS[lang]["meta_upload_scheduled_success"].format(
-            time=context.user_data["meta_upload"]["scheduled_utc"]
+            time=context.user_data["meta_upload"].get("scheduled_utc")
         ),
         reply_markup=build_admin_keyboard(lang, user_id=update.effective_user.id),
     )
@@ -741,4 +878,6 @@ meta_upload_handler = ConversationHandler(
         ),
         CallbackQueryHandler(back_to_enter_datetime, r"^back_to_enter_datetime$"),
     ],
+    name="meta_upload_handler",
+    persistent=True,
 )
