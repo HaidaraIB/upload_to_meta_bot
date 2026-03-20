@@ -3,6 +3,7 @@ import logging
 import time
 from meta.errors import format_meta_publish_failure
 from meta.publishers import publish_to_meta
+from meta.publish_notifications import send_publish_report
 import models
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,15 @@ async def schedule_publish_to_meta(context: ContextTypes.DEFAULT_TYPE):
             chat_id=context.job.user_id,
             text=result_text,
         )
+
+        await send_publish_report(
+            context,
+            status="published",
+            meta_post_id=meta_post_id,
+            payload=context.job.data["payload"],
+            meta_response=result_text,
+        )
+
         duration_ms = int((time.monotonic() - started_at) * 1000)
         logger.info(
             "Scheduled publish success: meta_post_id=%s duration_ms=%s",
@@ -69,7 +79,17 @@ async def schedule_publish_to_meta(context: ContextTypes.DEFAULT_TYPE):
                     meta_post.meta_response = None
                     meta_post.last_error = str(e)
 
+        failure_text = format_meta_publish_failure(e, lang)
+
+        await send_publish_report(
+            context,
+            status="failed",
+            meta_post_id=meta_post_id,
+            payload=context.job.data["payload"],
+            last_error=f"{failure_text}\n\nraw_error: {str(e)}",
+        )
+
         await context.bot.send_message(
             chat_id=context.job.user_id,
-            text=format_meta_publish_failure(e, lang),
+            text=failure_text,
         )

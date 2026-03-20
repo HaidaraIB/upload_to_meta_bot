@@ -707,6 +707,7 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Lazy import to avoid startup errors during partial dev
     from meta.publishers import publish_to_meta  # noqa: F401
+    from meta.publish_notifications import send_publish_report  # noqa: F401
 
     if schedule_mode == "now":
         await update.callback_query.edit_message_text(
@@ -721,6 +722,14 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     meta_post.meta_response = result
                     meta_post.last_error = None
 
+            await send_publish_report(
+                context,
+                status="published",
+                meta_post_id=meta_post_id,
+                payload=payload,
+                meta_response=result,
+            )
+
             await update.callback_query.edit_message_text(
                 text=result,
                 reply_markup=build_admin_keyboard(
@@ -730,6 +739,8 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             from meta.errors import format_meta_publish_failure
 
+            failure_text = format_meta_publish_failure(e, lang)
+
             with models.session_scope() as s:
                 meta_post = s.get(models.MetaPost, meta_post_id)
                 if meta_post:
@@ -737,8 +748,16 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     meta_post.meta_response = None
                     meta_post.last_error = str(e)
 
+            await send_publish_report(
+                context,
+                status="failed",
+                meta_post_id=meta_post_id,
+                payload=payload,
+                last_error=f"{failure_text}\n\nraw_error: {str(e)}",
+            )
+
             await update.callback_query.edit_message_text(
-                text=format_meta_publish_failure(e, lang),
+                text=failure_text,
                 reply_markup=build_admin_keyboard(
                     lang, user_id=update.effective_user.id
                 ),

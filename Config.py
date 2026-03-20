@@ -9,7 +9,25 @@ class Config:
     API_HASH = os.getenv("API_HASH")
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     OWNER_ID = int(os.getenv("OWNER_ID"))
-    ERRORS_CHANNEL = int(os.getenv("ERRORS_CHANNEL"))
+    _errors_channel_raw = os.getenv("ERRORS_CHANNEL")
+    try:
+        ERRORS_CHANNEL = (
+            int(_errors_channel_raw) if _errors_channel_raw else None
+        )
+    except ValueError:
+        ERRORS_CHANNEL = None
+
+    # Optional channel to receive meta publishing reports (chat_id).
+    # If not set (or invalid), publishing results will not be forwarded to a channel.
+    _publish_results_channel_raw = os.getenv("PUBLISH_RESULTS_CHANNEL")
+    try:
+        PUBLISH_RESULTS_CHANNEL = (
+            int(_publish_results_channel_raw)
+            if _publish_results_channel_raw
+            else None
+        )
+    except ValueError:
+        PUBLISH_RESULTS_CHANNEL = None
 
     DB_PATH = os.getenv("DB_PATH")
     DB_POOL_SIZE = 20

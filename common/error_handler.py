@@ -29,10 +29,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
     write_error(error)
 
-    await context.bot.send_message(
-        chat_id=Config.ERRORS_CHANNEL,
-        text=f"<pre>{html.escape(tb_string)}</pre>",
-    )
+    if Config.ERRORS_CHANNEL:
+        await context.bot.send_message(
+            chat_id=Config.ERRORS_CHANNEL,
+            text=f"<pre>{html.escape(tb_string)}</pre>",
+        )
 
 
 def write_error(error: str):
