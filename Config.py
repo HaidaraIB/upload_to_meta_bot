@@ -1,10 +1,16 @@
+import logging
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
+_LOG_LEVEL_NAME = os.getenv("LOG_LEVEL", "DEBUG").upper()
+LOG_LEVEL = getattr(logging, _LOG_LEVEL_NAME, logging.DEBUG)
+
 
 class Config:
+    LOG_LEVEL = LOG_LEVEL
+
     API_ID = int(os.getenv("API_ID"))
     API_HASH = os.getenv("API_HASH")
     BOT_TOKEN = os.getenv("BOT_TOKEN")

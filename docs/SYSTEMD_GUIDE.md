@@ -56,6 +56,7 @@ cp .env.prod .env
 - `API_HASH`
 - `BOT_TOKEN`
 - `OWNER_ID`
+- `LOG_LEVEL` (اختياري: `DEBUG` أو `INFO` … الافتراضي في الكود `DEBUG`؛ عيّن `INFO` في الإنتاج إذا أردت أقل ضجيجاً)
 - أي متغيرات DB / Meta أخرى يحتاجها البوت
 
 ---

@@ -192,6 +192,13 @@ TEXTS = {
         "meta_err_supabase_upload_failed": "فشل رفع الصورة إلى Supabase Storage (HTTP {status}): {detail} ❌",
         "meta_err_telegram_media_too_large": "حجم الملف يتجاوز الحد المسموح ({max_mb} ميغابايت) ❌",
         "meta_err_telegram_download": "فشل تحميل الملف من تيليجرام: {detail}",
+        "meta_err_ig_video_file_too_large": (
+            "حجم الفيديو يتجاوز حد إنستغرام لهذا النوع من المنشور ({max_mb} ميغابايت كحد أقصى وفق واجهة ميتا) ❌"
+        ),
+        "meta_err_ig_mp4_requires_faststart": (
+            "الفيديو لا يطابق متطلبات إنستغرام: يلزم MP4 بترتيب «fast start» (ذرة moov في بداية الملف، بدون edit lists). "
+            "أعد التصدير مثلاً: ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4 ❌"
+        ),
         "meta_upload_cancelled": "تم إلغاء العملية.",
         "toggle_permission": "تبديل الصلاحية",
         "all_permissions": "جميع الصلاحيات",
@@ -413,6 +420,14 @@ TEXTS = {
         "meta_err_supabase_upload_failed": "Failed to upload image to Supabase Storage (HTTP {status}): {detail} ❌",
         "meta_err_telegram_media_too_large": "File size exceeds the allowed limit ({max_mb} MB) ❌",
         "meta_err_telegram_download": "Failed to download the file from Telegram: {detail}",
+        "meta_err_ig_video_file_too_large": (
+            "Video file exceeds Instagram's limit for this post type ({max_mb} MB per Meta's API docs) ❌"
+        ),
+        "meta_err_ig_mp4_requires_faststart": (
+            "Video does not meet Instagram requirements: MP4 must be «fast start» "
+            "(moov atom at the beginning, no edit lists). Re-export e.g. "
+            "ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4 ❌"
+        ),
         "meta_upload_cancelled": "Operation cancelled.",
         "toggle_permission": "Toggle Permission",
         "all_permissions": "All Permissions",

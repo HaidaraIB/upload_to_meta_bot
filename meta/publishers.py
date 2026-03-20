@@ -11,6 +11,7 @@ from Config import Config
 from common.lang_dicts import TEXTS
 from meta.errors import MetaPublishUserError, graph_error_detail
 from meta.graph_client import _graph_request
+from meta.ig_video_preflight import instagram_video_binary_preflight
 from meta.supabase_storage import upload_bytes_public_url
 
 logger = logging.getLogger(__name__)
@@ -399,6 +400,8 @@ async def _publish_instagram(
             raise MetaPublishUserError("meta_err_ig_requires_video")
         if video_bytes is None:
             raise MetaPublishUserError("meta_err_ig_missing_video_bytes")
+
+        instagram_video_binary_preflight(video_bytes, post_type)
 
         ig_media_type = media_type_map[post_type]
         creation_id = await _ig_create_container(
