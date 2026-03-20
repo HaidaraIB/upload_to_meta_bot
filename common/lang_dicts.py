@@ -208,6 +208,14 @@ TEXTS = {
             "الفيديو لا يطابق متطلبات إنستغرام: يلزم MP4 بترتيب «fast start» (ذرة moov في بداية الملف، بدون edit lists). "
             "أعد التصدير مثلاً: ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4 ❌"
         ),
+        "publish_report_title": "نتيجة نشر Meta",
+        "publish_report_status": "الحالة",
+        "publish_report_page": "البيج",
+        "publish_report_datetime": "التاريخ والوقت",
+        "publish_report_admin": "الادمن",
+        "publish_report_status_published": "منشور",
+        "publish_report_status_failed": "فشل",
+        "publish_report_error": "السبب",
         "meta_upload_cancelled": "تم إلغاء العملية.",
         "toggle_permission": "تبديل الصلاحية",
         "all_permissions": "جميع الصلاحيات",
@@ -448,6 +456,14 @@ TEXTS = {
             "(moov atom at the beginning, no edit lists). Re-export e.g. "
             "ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4 ❌"
         ),
+        "publish_report_title": "Meta publish result",
+        "publish_report_status": "Status",
+        "publish_report_page": "Page",
+        "publish_report_datetime": "Date & time",
+        "publish_report_admin": "Admin",
+        "publish_report_status_published": "Published",
+        "publish_report_status_failed": "Failed",
+        "publish_report_error": "Reason",
         "meta_upload_cancelled": "Operation cancelled.",
         "toggle_permission": "Toggle Permission",
         "all_permissions": "All Permissions",

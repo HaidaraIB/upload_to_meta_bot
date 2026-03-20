@@ -1,10 +1,16 @@
 import copy
-import json
 import logging
 import re
+from datetime import datetime, timezone
+from html import escape
 from typing import Any
+from urllib.parse import urlparse
+
+from telegram.constants import ParseMode
 
 from Config import Config
+from common.lang_dicts import TEXTS
+import models
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +32,18 @@ def _sanitize_text(value: str, *, max_len: int = 2000) -> str:
         return ""
     v = str(value)
     # Redact "Bearer <token>"
-    v = re.sub(r"(Bearer\\s+)[^\\s]+", r"\\1[REDACTED]", v, flags=re.IGNORECASE)
+    v = re.sub(r"(Bearer\s+)[^\s]+", r"\1[REDACTED]", v, flags=re.IGNORECASE)
     # Redact "access_token=..."
     v = re.sub(
-        r"(access_token\\s*=?\\s*)[^\\s&]+",
-        r"\\1[REDACTED]",
+        r"(access_token\s*=\s*)[^\s&]+",
+        r"\1[REDACTED]",
         v,
         flags=re.IGNORECASE,
     )
     # Redact "token: <...>" and similar
     v = re.sub(
-        r"(token\\s*[:=]\\s*)[^\\s,;\\]\"']+",
-        r"\\1[REDACTED]",
+        r"(token\s*[:=]\s*)[^\s,;\]\"']+",
+        r"\1[REDACTED]",
         v,
         flags=re.IGNORECASE,
     )
@@ -54,6 +60,7 @@ def sanitize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     Note:
     - This is key-based redaction (based on key substrings), not value-based.
     """
+
     def _walk(obj: Any) -> Any:
         if isinstance(obj, dict):
             out: dict[str, Any] = {}
@@ -81,76 +88,83 @@ def _truncate_string(value: Any, max_len: int) -> str:
     return s[:max_len] + "...(truncated)"
 
 
-def build_publish_report_text(
+def _lang_from_payload(payload: dict[str, Any]) -> models.Language:
+    raw = payload.get("lang")
+    if isinstance(raw, models.Language):
+        return raw
+    if isinstance(raw, str) and "ENGLISH" in raw.upper():
+        return models.Language.ENGLISH
+    return models.Language.ARABIC
+
+
+def _clip_telegram_caption(html: str, max_len: int = 1024) -> str:
+    if len(html) <= max_len:
+        return html
+    return html[: max_len - 20] + "\n…(truncated)"
+
+
+def _is_http_url(url: str) -> bool:
+    try:
+        p = urlparse(url)
+        return p.scheme in ("http", "https") and bool(p.netloc)
+    except Exception:
+        return False
+
+
+def build_publish_report_html(
     *,
     status: str,
     meta_post_id: int | None,
     payload: dict[str, Any],
     meta_response: str | None,
     last_error: str | None,
+    report_at_utc: datetime | None = None,
 ) -> str:
-    lang = payload.get("lang")
-    admin_id = payload.get("admin_id")
-    page_id = payload.get("page_id")
-    page_name = payload.get("page_name")
-    instagram_user_name = payload.get("instagram_user_name")
-    post_type = payload.get("post_type")
-    media_type = payload.get("media_type")
-    platforms = payload.get("platforms")
-    schedule_mode = payload.get("schedule_mode")
-    scheduled_utc_raw = payload.get("scheduled_utc_raw")
-    caption = payload.get("caption")
+    """
+    Short localized HTML report for the publish-results channel.
+    meta_post_id / meta_response are accepted for call-site compatibility but omitted from output.
+    """
+    _ = meta_post_id, meta_response
 
-    # Keep caption + meta_response short enough for Telegram.
-    caption_s = _truncate_string(caption, 800)
-    meta_response_s = _truncate_string(meta_response, 1200) if meta_response else ""
-    last_error_s = _truncate_string(last_error, 1200) if last_error else ""
+    lang = _lang_from_payload(payload)
+    t = TEXTS[lang]
 
-    sanitized = sanitize_payload(payload)
-    # payload قد يحتوي على كائنات غير قابلة للـJSON (مثل datetime).
-    # default=str يجعل الإرسال يعمل بدون فشل.
-    sanitized_json = json.dumps(
-        sanitized, ensure_ascii=False, indent=2, default=str
+    when = report_at_utc or datetime.now(timezone.utc)
+    dt_str = when.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    status_key = (
+        "publish_report_status_published"
+        if status == "published"
+        else "publish_report_status_failed"
     )
-    # Telegram limit is 4096 chars. Keep a hard cap to avoid failures.
-    sanitized_json = _truncate_string(sanitized_json, 1500)
+    status_text = t[status_key]
 
-    lines: list[str] = []
-    lines.append("نتيجة نشر Meta")
-    lines.append(f"status: {status}")
-    if meta_post_id is not None:
-        lines.append(f"meta_post_id: {meta_post_id}")
-    if admin_id is not None:
-        lines.append(f"admin_id: {admin_id}")
+    page_name = payload.get("page_name")
+    page_display = page_name if page_name is not None else "—"
 
-    lines.append("---")
-    lines.append(f"page_id: {page_id}")
-    lines.append(f"page_name: {page_name}")
-    lines.append(f"instagram_user_name: {instagram_user_name}")
-    lines.append(f"post_type: {post_type}")
-    lines.append(f"media_type: {media_type}")
-    lines.append(f"platforms: {platforms}")
-    lines.append(f"caption: {caption_s}")
+    admin_id = payload.get("admin_id")
+    admin_display = str(admin_id) if admin_id is not None else "—"
 
-    if schedule_mode:
-        lines.append(f"schedule_mode: {schedule_mode}")
-    if scheduled_utc_raw:
-        lines.append(f"scheduled_utc_raw: {scheduled_utc_raw}")
+    lines: list[str] = [
+        f"<b>{escape(t['publish_report_title'])}</b>",
+        f"<b>{escape(t['publish_report_status'])}</b>: {escape(status_text)}",
+        f"<b>{escape(t['publish_report_page'])}</b>: {escape(str(page_display))}",
+        f"<b>{escape(t['publish_report_datetime'])}</b>: {escape(dt_str)}",
+        f"<b>{escape(t['publish_report_admin'])}</b>: {escape(admin_display)}",
+    ]
 
-    lines.append("---")
-    if status == "published":
-        lines.append(f"meta_response: {_sanitize_text(meta_response_s, max_len=1200)}")
-    else:
-        lines.append(f"last_error: {_sanitize_text(last_error_s, max_len=1200)}")
-
-    if lang is not None:
-        lines.append(f"lang: {lang}")
-
-    lines.append("---")
-    lines.append("payload_sanitized_json:")
-    lines.append(sanitized_json)
+    if status != "published" and last_error:
+        err = _sanitize_text(_truncate_string(last_error, 300), max_len=300)
+        lines.append(
+            f"<b>{escape(t['publish_report_error'])}</b>: {escape(err)}"
+        )
 
     return "\n".join(lines)
+
+
+# Backwards-compatible name for callers/tests expecting "text" (now HTML).
+def build_publish_report_text(**kwargs: Any) -> str:
+    return build_publish_report_html(**kwargs)
 
 
 async def send_publish_report(
@@ -170,15 +184,71 @@ async def send_publish_report(
         return
 
     try:
-        text = build_publish_report_text(
+        html = build_publish_report_html(
             status=status,
             meta_post_id=meta_post_id,
             payload=payload,
             meta_response=meta_response,
             last_error=last_error,
         )
-        await context.bot.send_message(chat_id=chat_id, text=text)
+        caption = _clip_telegram_caption(html)
+
+        media_file_id = payload.get("media_file_id")
+        media_type = (payload.get("media_type") or "").strip().lower()
+        image_url = payload.get("instagram_image_url")
+
+        sent_with_media = False
+        if media_file_id and media_type == "photo":
+            try:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=media_file_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                )
+                sent_with_media = True
+            except Exception:
+                logger.exception(
+                    "Failed to send publish report photo to channel; falling back to text"
+                )
+        elif media_file_id and media_type == "video":
+            try:
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=media_file_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                )
+                sent_with_media = True
+            except Exception:
+                logger.exception(
+                    "Failed to send publish report video to channel; falling back to text"
+                )
+        elif (
+            not media_file_id
+            and isinstance(image_url, str)
+            and _is_http_url(image_url)
+        ):
+            try:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=image_url,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                )
+                sent_with_media = True
+            except Exception:
+                logger.exception(
+                    "Failed to send publish report image URL to channel; falling back to text"
+                )
+
+        if not sent_with_media:
+            # Text-only posts or media send failure: full message allows > caption limit.
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=html,
+                parse_mode=ParseMode.HTML,
+            )
     except Exception:
         # Never break the main publishing flow due to notifications.
         logger.exception("Failed to send publish report to channel")
-
