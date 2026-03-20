@@ -247,3 +247,57 @@ sudo journalctl -u upload_to_meta_bot -n 100 --no-pager
 - البوت يشتغل تلقائيًا بعد reboot
 - يعيد التشغيل تلقائيًا عند التعطل
 - إدارة واضحة وسريعة من مكان واحد
+
+---
+
+## Update Workflow (تطبيق التحديثات)
+
+### الحالة العادية: تحديث كود البوت
+
+بعد أي تحديث للكود، نفّذ:
+
+```bash
+cd /path/to/upload_to_meta_bot
+git pull
+sudo systemctl restart upload_to_meta_bot
+sudo systemctl status upload_to_meta_bot
+```
+
+### إذا التحديث يحتوي مكتبات جديدة
+
+نفّذ:
+
+```bash
+cd /path/to/upload_to_meta_bot
+git pull
+source .venv/bin/activate
+pip install -r requirements.txt
+deactivate
+sudo systemctl restart upload_to_meta_bot
+sudo systemctl status upload_to_meta_bot
+```
+
+### إذا عدّلت ملف الخدمة نفسه
+
+إذا عدّلت:
+
+- `/etc/systemd/system/upload_to_meta_bot.service`
+
+فلازم تعمل:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart upload_to_meta_bot
+sudo systemctl status upload_to_meta_bot
+```
+
+### التحقق الفوري بعد أي تحديث
+
+```bash
+sudo journalctl -u upload_to_meta_bot -f
+```
+
+إذا ظهرت مشكلة بعد تحديث:
+
+- تحقق من dependencies (`pip install -r requirements.txt`)
+- تحقق من متغيرات البيئة داخل `.env`
