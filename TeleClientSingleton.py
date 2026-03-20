@@ -1,18 +1,24 @@
+import asyncio
 from telethon import TelegramClient
 from Config import Config
 
 
-class TeleClientSingleton(TelegramClient):
-    _instance = None
+class TeleClientSingleton:
+    _instance: TelegramClient | None = None
+    _lock = asyncio.Lock()
 
-    def __new__(cls, *args, **kwargs):
-        if not cls._instance:
+    @classmethod
+    async def get_client(cls) -> TelegramClient:
+        if cls._instance and cls._instance.is_connected():
+            return cls._instance
 
-            cls._instance = TelegramClient(
-                session="tele_client",
-                api_id=Config.API_ID,
-                api_hash=Config.API_HASH,
-            ).start(
-                bot_token=Config.BOT_TOKEN,
-            )
+        async with cls._lock:
+            if cls._instance is None:
+                cls._instance = TelegramClient(
+                    session="tele_client",
+                    api_id=Config.API_ID,
+                    api_hash=Config.API_HASH,
+                )
+            if not cls._instance.is_connected():
+                await cls._instance.start(bot_token=Config.BOT_TOKEN)
         return cls._instance

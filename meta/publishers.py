@@ -24,7 +24,7 @@ async def _download_via_telethon(chat_id: int, message_id: int, max_bytes: int) 
     """Download via MTProto (Telethon); supports files far above Bot API getFile ~20MB cap."""
     from TeleClientSingleton import TeleClientSingleton
 
-    client = TeleClientSingleton()
+    client = await TeleClientSingleton.get_client()
     msg = await client.get_messages(chat_id, ids=message_id)
     if isinstance(msg, list):
         msg = msg[0] if msg else None
