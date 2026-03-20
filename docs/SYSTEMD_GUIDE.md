@@ -1,34 +1,36 @@
-# Ubuntu Guide: Run Telegram Bot with systemd
+# دليل Ubuntu الكامل لتشغيل البوت بـ systemd
 
-This guide shows the simplest production setup for Python Telegram bots on Ubuntu VPS without using `screen`.
+هذا الدليل هو أبسط طريقة Production لتشغيل بوتات Python على VPS بدون `screen`، مع إعادة تشغيل تلقائية بعد إعادة تشغيل السيرفر أو تعطل العملية.
 
-## Why this is better than screen
+## لماذا `systemd` أفضل من `screen`؟
 
-- Auto-starts bot after VPS reboot
-- Auto-restarts bot after crashes
-- Centralized logs with `journalctl`
-- Simple daily management with `systemctl`
+- تشغيل تلقائي بعد reboot
+- إعادة تشغيل تلقائية عند crash
+- إدارة موحدة عبر `systemctl`
+- متابعة Logs بسهولة عبر `journalctl`
 
-## 1) Connect to your VPS
+---
+
+## 1) الاتصال بالسيرفر
 
 ```bash
 ssh your_user@your_vps_ip
 ```
 
-## 2) Install required packages
+## 2) تثبيت المتطلبات
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip
 ```
 
-## 3) Go to bot project folder
+## 3) الدخول لمجلد المشروع
 
 ```bash
 cd /path/to/upload_to_meta_bot
 ```
 
-## 4) Create virtual environment and install dependencies
+## 4) إعداد البيئة الافتراضية وتنزيل المكتبات
 
 ```bash
 python3 -m venv .venv
@@ -38,44 +40,48 @@ pip install -r requirements.txt
 deactivate
 ```
 
-## 5) Prepare environment variables
+## 5) تجهيز ملف البيئة `.env`
 
-Your project reads `.env` using `load_dotenv()`, so keep a valid `.env` file in the project root.
+مشروعك يقرأ الإعدادات من `.env` عبر `load_dotenv()`، لذلك تأكد أن الملف موجود في جذر المشروع.
 
-If you have `.env.prod`:
+إذا ملفك الجاهز هو `.env.prod`:
 
 ```bash
 cp .env.prod .env
 ```
 
-Make sure `.env` includes values like:
+تأكد أن `.env` يحتوي المتغيرات المطلوبة (مثل):
 
 - `API_ID`
 - `API_HASH`
 - `BOT_TOKEN`
 - `OWNER_ID`
-- any DB/Meta variables your bot needs
+- أي متغيرات DB / Meta أخرى يحتاجها البوت
 
-## 6) Create a systemd service
+---
 
-Create the service file:
+## 6) إنشاء خدمة systemd
+
+أنشئ الملف:
 
 ```bash
 sudo nano /etc/systemd/system/upload_to_meta_bot.service
 ```
 
-Paste and edit paths/user:
+### الخيار الموصى به (آمن - مستخدم مخصص)
 
 ```ini
 [Unit]
 Description=Upload To Meta Telegram Bot
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=your_user
-WorkingDirectory=/path/to/upload_to_meta_bot
-ExecStart=/path/to/upload_to_meta_bot/.venv/bin/python /path/to/upload_to_meta_bot/main.py
+User=botuser
+WorkingDirectory=/home/botuser/upload_to_meta_bot
+EnvironmentFile=/home/botuser/upload_to_meta_bot/.env
+ExecStart=/home/botuser/upload_to_meta_bot/.venv/bin/python /home/botuser/upload_to_meta_bot/main.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
@@ -84,9 +90,33 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 ```
 
-Save and exit.
+### الخيار السريع (إذا المشروع داخل `/root`)
 
-## 7) Enable and start service
+```ini
+[Unit]
+Description=Upload To Meta Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/upload_to_meta_bot
+EnvironmentFile=/root/upload_to_meta_bot/.env
+ExecStart=/root/upload_to_meta_bot/.venv/bin/python /root/upload_to_meta_bot/main.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+```
+
+احفظ الملف ثم اخرج.
+
+---
+
+## 7) تفعيل وتشغيل الخدمة
 
 ```bash
 sudo systemctl daemon-reload
@@ -94,55 +124,126 @@ sudo systemctl enable upload_to_meta_bot
 sudo systemctl start upload_to_meta_bot
 ```
 
-## 8) Check service status
+## 8) التأكد من الحالة
 
 ```bash
 sudo systemctl status upload_to_meta_bot
 ```
 
-Expected result: `active (running)`.
+النتيجة المطلوبة:
 
-## 9) View logs
+- `active (running)`
+
+## 9) متابعة السجلات (Logs)
 
 ```bash
 sudo journalctl -u upload_to_meta_bot -f
 ```
 
-## Daily commands
+---
 
-Restart:
+## أوامر يومية مهمة
 
-```bash
-sudo systemctl restart upload_to_meta_bot
-```
-
-Stop:
-
-```bash
-sudo systemctl stop upload_to_meta_bot
-```
-
-Start:
+تشغيل:
 
 ```bash
 sudo systemctl start upload_to_meta_bot
 ```
 
-Disable auto-start:
+إيقاف:
+
+```bash
+sudo systemctl stop upload_to_meta_bot
+```
+
+إعادة تشغيل:
+
+```bash
+sudo systemctl restart upload_to_meta_bot
+```
+
+تعطيل التشغيل التلقائي مع الإقلاع:
 
 ```bash
 sudo systemctl disable upload_to_meta_bot
 ```
 
-## Multi-bot pattern (simple)
+---
 
-For each bot:
+## بعد أي تعديل في ملف الخدمة
 
-1. Keep each bot in its own folder
-2. Create its own `.venv`
-3. Create a separate service file with a unique name, for example:
-   - `bot_a.service`
-   - `bot_b.service`
-4. Run `daemon-reload`, `enable`, and `start` for each service
+إذا عدلت `/etc/systemd/system/upload_to_meta_bot.service` نفذ دائمًا:
 
-This gives you reliable production behavior with minimal complexity.
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart upload_to_meta_bot
+```
+
+---
+
+## نشر تحديثات الكود (روتين سريع)
+
+داخل مجلد المشروع:
+
+```bash
+cd /path/to/upload_to_meta_bot
+source .venv/bin/activate
+pip install -r requirements.txt
+deactivate
+sudo systemctl restart upload_to_meta_bot
+```
+
+---
+
+## مشاكل شائعة وحلها
+
+### الخدمة لا تعمل
+
+افحص:
+
+```bash
+sudo systemctl status upload_to_meta_bot
+sudo journalctl -u upload_to_meta_bot -n 100 --no-pager
+```
+
+### خطأ: ملف `.env` غير موجود
+
+- تأكد من المسار في `EnvironmentFile=...`
+- تأكد أن الملف موجود فعلاً في نفس المسار
+
+### خطأ: Python أو venv غير موجود
+
+- تأكد من المسار داخل `ExecStart=...`
+- يجب أن يكون الملف التنفيذي موجودًا:
+  - `/path/to/project/.venv/bin/python`
+
+### الخدمة تعمل ثم تتوقف فورًا
+
+- غالبًا متغير بيئة ناقص أو خطأ في الكود
+- راجع `journalctl` وستظهر تفاصيل الخطأ
+
+---
+
+## تشغيل عدة بوتات بنفس الأسلوب
+
+لكل بوت:
+
+1. مجلد مشروع مستقل
+2. `.venv` مستقل
+3. ملف خدمة مستقل باسم مختلف، مثال:
+   - `bot_upload_meta.service`
+   - `bot_orders.service`
+4. فعّل كل خدمة:
+   - `daemon-reload`
+   - `enable`
+   - `start`
+
+---
+
+## خلاصة
+
+باستخدام `systemd` لن تحتاج مراقبة يدوية مثل `screen`:
+
+- البوت يشتغل تلقائيًا بعد reboot
+- يعيد التشغيل تلقائيًا عند التعطل
+- إدارة واضحة وسريعة من مكان واحد
