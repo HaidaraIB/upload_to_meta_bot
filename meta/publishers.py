@@ -5,6 +5,7 @@ from typing import Any
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 import aiohttp
 import models
 from telegram.error import TelegramError
@@ -14,12 +15,33 @@ from meta.errors import MetaPublishUserError, graph_error_detail
 from meta.graph_client import _graph_request
 from meta.ig_video_preflight import instagram_video_binary_preflight
 from meta.supabase_storage import upload_bytes_public_url
+from meta.video_normalizer import normalize_instagram_video_bytes
 
 logger = logging.getLogger(__name__)
 
 
 def _max_telegram_media_bytes() -> int:
     return int(getattr(Config, "TELEGRAM_MEDIA_MAX_BYTES", 200 * 1024 * 1024))
+
+
+def _prepare_instagram_video_bytes(video_bytes: bytes, post_type: str) -> bytes:
+    """
+    Normalize known MP4 layout issues for Instagram, then re-run strict preflight.
+    """
+    prepared = normalize_instagram_video_bytes(video_bytes)
+    if prepared.changed:
+        logger.info("Instagram video normalized before publish: method=%s", prepared.method)
+    instagram_video_binary_preflight(prepared.video_bytes, post_type)
+    return prepared.video_bytes
+
+
+def _meta_schedule_unix(payload: dict[str, Any]) -> int | None:
+    if payload.get("scheduler_backend") != "meta":
+        return None
+    scheduled_dt = payload.get("scheduled_utc_dt")
+    if not isinstance(scheduled_dt, datetime):
+        return None
+    return int(scheduled_dt.astimezone(timezone.utc).timestamp())
 
 
 async def _edit_publish_progress_message(
@@ -213,6 +235,8 @@ async def _ig_create_container(
     upload_type: str | None = None,
     image_url: str | None = None,
     *,
+    schedule_unix: int | None = None,
+    publish_now: bool = True,
     access_token: str | None = None,
 ) -> str:
     logger.debug(
@@ -229,6 +253,10 @@ async def _ig_create_container(
         params["caption"] = caption
     if image_url:
         params["image_url"] = image_url
+    if not publish_now:
+        params["published"] = "false"
+    if schedule_unix is not None:
+        params["scheduled_publish_time"] = str(schedule_unix)
 
     body = await _graph_request(
         session,
@@ -252,6 +280,8 @@ async def _ig_upload_and_publish_video_resumable(
     creation_id: str,
     video_bytes: bytes,
     *,
+    schedule_unix: int | None = None,
+    publish_now: bool = True,
     access_token: str | None = None,
 ) -> dict[str, Any]:
     token = access_token or Config.META_ACCESS_TOKEN
@@ -287,10 +317,128 @@ async def _ig_upload_and_publish_video_resumable(
         session,
         "POST",
         f"/{ig_user_id}/media_publish",
-        params={"creation_id": creation_id},
+        params={
+            "creation_id": creation_id,
+            "published": "true" if publish_now else "false",
+            **(
+                {"scheduled_publish_time": str(schedule_unix)}
+                if schedule_unix is not None
+                else {}
+            ),
+        },
         access_token=access_token,
     )
     return body
+
+
+def _validate_publish_payload_rules(payload: dict[str, Any]) -> None:
+    platforms: list[str] = payload.get("platforms") or []
+    post_type = payload["post_type"]
+    media_type = payload.get("media_type")
+    caption = payload.get("caption") or ""
+    ig_user_id = str(payload.get("instagram_user_id") or "")
+
+    if not platforms:
+        raise MetaPublishUserError("meta_err_no_platforms")
+    if post_type == "reel" and media_type != "video":
+        raise MetaPublishUserError("meta_err_reel_requires_video")
+    if post_type == "story" and not media_type:
+        raise MetaPublishUserError("meta_err_story_requires_media")
+    if post_type == "feed" and not media_type and "instagram" in platforms:
+        raise MetaPublishUserError("meta_err_instagram_no_text_only")
+    if "instagram" in platforms and not ig_user_id:
+        raise MetaPublishUserError("meta_err_missing_ig_user_id")
+    if (
+        "facebook" in platforms
+        and post_type == "feed"
+        and not media_type
+        and not caption
+    ):
+        raise MetaPublishUserError("meta_err_fb_text_requires_caption")
+
+
+async def preflight_publish_payload(payload: dict[str, Any], context) -> None:
+    """
+    Validate payload before scheduling without creating/publishing any post.
+    Raises MetaPublishUserError on predictable failures.
+    """
+    _validate_publish_payload_rules(payload)
+
+    platforms: list[str] = payload.get("platforms") or []
+    page_id = str(payload["page_id"])
+    post_type = payload["post_type"]
+    media_type = payload.get("media_type")
+    media_file_id = payload.get("media_file_id")
+    ig_user_id = str(payload.get("instagram_user_id") or "")
+    supabase_configured = all(
+        [
+            getattr(Config, "SUPABASE_URL", None),
+            getattr(Config, "SUPABASE_SERVICE_ROLE_KEY", None),
+            getattr(Config, "SUPABASE_STORAGE_BUCKET", None),
+        ]
+    )
+    graph_token = payload.get("page_access_token") or Config.META_ACCESS_TOKEN
+
+    need_video_bytes = media_type == "video" and (
+        ("instagram" in platforms and post_type in ("reel", "story", "feed"))
+        or ("facebook" in platforms and post_type in ("reel", "story", "feed"))
+    )
+    need_instagram_photo_bytes = (
+        media_type == "photo"
+        and post_type in ("feed", "story")
+        and "instagram" in platforms
+        and not payload.get("instagram_image_url")
+        and bool(media_file_id)
+        and supabase_configured
+    )
+    need_photo_bytes = media_type == "photo" and (
+        ("facebook" in platforms and post_type in ("feed", "story"))
+        or need_instagram_photo_bytes
+    )
+
+    timeout = aiohttp.ClientTimeout(
+        total=getattr(Config, "META_HTTP_TIMEOUT_TOTAL", 600),
+        sock_read=getattr(Config, "META_HTTP_TIMEOUT_TOTAL", 600),
+    )
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        # Safe remote checks: verify token/page access and IG visibility.
+        await _graph_request(
+            session,
+            "GET",
+            f"/{page_id}",
+            params={"fields": "id"},
+            access_token=graph_token,
+        )
+        if "instagram" in platforms:
+            await _graph_request(
+                session,
+                "GET",
+                f"/{ig_user_id}",
+                params={"fields": "id"},
+                access_token=graph_token,
+            )
+
+        video_bytes = None
+        photo_bytes = None
+        if need_video_bytes:
+            video_bytes = await _download_telegram_file(context, payload)
+        if need_photo_bytes:
+            photo_bytes = await _download_telegram_file(context, payload)
+
+        if (
+            "instagram" in platforms
+            and media_type == "video"
+            and post_type in ("reel", "story", "feed")
+        ):
+            if video_bytes is None:
+                raise MetaPublishUserError("meta_err_ig_missing_video_bytes")
+            video_bytes = _prepare_instagram_video_bytes(video_bytes, post_type)
+
+        if "instagram" in platforms and media_type == "photo":
+            if not payload.get("instagram_image_url") and not (
+                need_instagram_photo_bytes and photo_bytes is not None
+            ):
+                raise MetaPublishUserError("meta_err_ig_missing_image_url")
 
 
 async def publish_to_meta(payload: dict[str, Any], context) -> str:
@@ -313,20 +461,10 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
         ]
     )
 
-    if not platforms:
-        raise MetaPublishUserError("meta_err_no_platforms")
-
+    _validate_publish_payload_rules(payload)
+    schedule_unix = _meta_schedule_unix(payload)
+    publish_now = schedule_unix is None
     graph_token = payload.get("page_access_token") or Config.META_ACCESS_TOKEN
-
-    if post_type == "reel":
-        if media_type != "video":
-            raise MetaPublishUserError("meta_err_reel_requires_video")
-    if post_type == "story":
-        if not media_type:
-            raise MetaPublishUserError("meta_err_story_requires_media")
-    if post_type == "feed":
-        if not media_type and "instagram" in platforms:
-            raise MetaPublishUserError("meta_err_instagram_no_text_only")
 
     # Determine what we need to download from Telegram.
     need_video_bytes = media_type == "video" and (
@@ -403,6 +541,8 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
                     media_type,
                     video_bytes,
                     payload,
+                    schedule_unix=schedule_unix,
+                    publish_now=publish_now,
                     access_token=graph_token,
                 )
             )
@@ -425,14 +565,23 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
                     video_bytes,
                     photo_bytes,
                     payload,
+                    schedule_unix=schedule_unix,
+                    publish_now=publish_now,
                     access_token=graph_token,
                 )
             )
 
     if len(results) == 1:
-        return results[0]
-    joiner = "\n\n"
-    return joiner.join([r for r in results if r])
+        result_text = results[0]
+    else:
+        joiner = "\n\n"
+        result_text = joiner.join([r for r in results if r])
+
+    # Expose video bytes for post-publish orchestrators (e.g., Drive archival).
+    # Caller is expected to pop this key after use.
+    if media_type == "video" and video_bytes is not None:
+        payload["_post_publish_video_bytes"] = video_bytes
+    return result_text
 
 
 async def _publish_instagram(
@@ -444,6 +593,8 @@ async def _publish_instagram(
     video_bytes: bytes | None,
     payload: dict[str, Any],
     *,
+    schedule_unix: int | None = None,
+    publish_now: bool = True,
     access_token: str | None = None,
 ) -> str:
     if not ig_user_id:
@@ -474,7 +625,7 @@ async def _publish_instagram(
         if video_bytes is None:
             raise MetaPublishUserError("meta_err_ig_missing_video_bytes")
 
-        instagram_video_binary_preflight(video_bytes, post_type)
+        video_bytes = _prepare_instagram_video_bytes(video_bytes, post_type)
 
         ig_media_type = media_type_map[post_type]
         creation_id = await _ig_create_container(
@@ -483,6 +634,8 @@ async def _publish_instagram(
             media_type=ig_media_type,
             caption=platforms_caption if platforms_caption else None,
             upload_type="resumable",
+            schedule_unix=schedule_unix,
+            publish_now=publish_now,
             access_token=access_token,
         )
         await _ig_upload_and_publish_video_resumable(
@@ -490,6 +643,8 @@ async def _publish_instagram(
             ig_user_id=ig_user_id,
             creation_id=creation_id,
             video_bytes=video_bytes,
+            schedule_unix=schedule_unix,
+            publish_now=publish_now,
             access_token=access_token,
         )
         return TEXTS[lang]["meta_upload_publish_ok_instagram"]
@@ -518,13 +673,23 @@ async def _publish_instagram(
         media_type=ig_media_type,
         caption=platforms_caption if platforms_caption else None,
         image_url=image_url,
+        schedule_unix=schedule_unix,
+        publish_now=publish_now,
         access_token=access_token,
     )
     await _graph_request(
         session,
         "POST",
         f"/{ig_user_id}/media_publish",
-        params={"creation_id": creation_id},
+        params={
+            "creation_id": creation_id,
+            "published": "true" if publish_now else "false",
+            **(
+                {"scheduled_publish_time": str(schedule_unix)}
+                if schedule_unix is not None
+                else {}
+            ),
+        },
         access_token=access_token,
     )
     return TEXTS[lang]["meta_upload_publish_ok_instagram"]
@@ -540,6 +705,8 @@ async def _publish_facebook(
     photo_bytes: bytes | None,
     payload: dict[str, Any],
     *,
+    schedule_unix: int | None = None,
+    publish_now: bool = True,
     access_token: str | None = None,
 ) -> str:
     lang = payload.get("lang", models.Language.ARABIC)
@@ -553,7 +720,15 @@ async def _publish_facebook(
                 session,
                 "POST",
                 f"/{page_id}/feed",
-                params={"message": caption, "published": "true"},
+                params={
+                    "message": caption,
+                    "published": "true" if publish_now else "false",
+                    **(
+                        {"scheduled_publish_time": str(schedule_unix)}
+                        if schedule_unix is not None
+                        else {}
+                    ),
+                },
                 access_token=access_token,
             )
             return TEXTS[lang]["meta_upload_publish_ok_facebook"]
@@ -569,7 +744,9 @@ async def _publish_facebook(
             )
             if caption:
                 form.add_field("message", caption)
-            form.add_field("published", "true")
+            form.add_field("published", "true" if publish_now else "false")
+            if schedule_unix is not None:
+                form.add_field("scheduled_publish_time", str(schedule_unix))
             await _graph_request(
                 session,
                 "POST",
@@ -589,7 +766,9 @@ async def _publish_facebook(
             )
             if caption:
                 form.add_field("description", caption)
-            form.add_field("published", "true")
+            form.add_field("published", "true" if publish_now else "false")
+            if schedule_unix is not None:
+                form.add_field("scheduled_publish_time", str(schedule_unix))
             # Note: depending on your setup, /videos might require the Video API flow.
             await _graph_request(
                 session,

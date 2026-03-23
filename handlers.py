@@ -19,10 +19,12 @@ from admin.broadcast import *
 from admin.ban import *
 from admin.force_join_chats_settings import *
 from admin.manage_users_settings import *
+from admin.google_drive_settings import *
 
 from models import init_db
 
 from MyApp import MyApp
+from TeleClientSingleton import TeleClientSingleton
 
 
 def setup_and_run():
@@ -41,7 +43,13 @@ def setup_and_run():
     app.add_handler(edit_admin_permissions_handler)
     app.add_handler(admin_settings_handler)
     app.add_handler(meta_settings_handler)
-    
+    app.add_handler(google_drive_settings_handler)
+    app.add_handler(add_drive_folder_handler)
+    app.add_handler(remove_drive_folder_handler)
+    app.add_handler(show_drive_folders_handler)
+    app.add_handler(link_drive_folder_handler)
+    app.add_handler(unlink_drive_folder_handler)
+
     # MANAGE USERS SETTINGS
     app.add_handler(manage_users_settings_handler)
     app.add_handler(export_users_handler)
@@ -68,4 +76,6 @@ def setup_and_run():
 
     app.add_error_handler(error_handler)
 
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
+
+    TeleClientSingleton.get_client_sync().disconnect()

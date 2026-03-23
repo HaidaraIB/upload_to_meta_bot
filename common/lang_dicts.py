@@ -107,6 +107,23 @@ TEXTS = {
         "meta_settings_enter_offset": "أرسل عدد ساعات UTC (مثال: 3 أو -5)",
         "meta_settings_invalid_offset": "قيمة غير صالحة. استخدم رقم صحيح بين -12 و 14.",
         "meta_settings_saved_success": "تم تحديث UTC+{offset} بنجاح ✅",
+        "google_drive_settings_title": "إعدادات Google Drive 🗂",
+        "drive_folder_add_name_instruction": "أرسل اسم المجلد الذي سيظهر في القائمة.",
+        "drive_folder_add_id_instruction": "أرسل معرف مجلد Google Drive (Folder ID).",
+        "drive_folder_added_success": "تم حفظ المجلد بنجاح ✅",
+        "drive_folder_removed_success": "تم حذف المجلد بنجاح ✅",
+        "drive_folder_no_items": "لا توجد مجلدات Google Drive محفوظة حالياً ❗️",
+        "drive_folder_remove_instruction": "اختر المجلد الذي تريد حذفه:",
+        "drive_folder_list_title": "قائمة مجلدات Google Drive:",
+        "drive_folder_link_choose_folder": "اختر المجلد الذي تريد ربطه مع أصل Meta:",
+        "drive_folder_link_choose_asset": "اختر الصفحة/حساب IG المراد ربطه بالمجلد:",
+        "drive_folder_unlink_choose_folder": "اختر المجلد الذي تريد فك ربطه:",
+        "drive_folder_link_saved_success": "تم ربط المجلد بنجاح ✅",
+        "drive_folder_unlink_saved_success": "تم فك الربط بنجاح ✅",
+        "drive_folder_asset_not_found": "لم يتم العثور على الأصل المختار ❌",
+        "drive_folder_details_title": "تفاصيل المجلد:",
+        "drive_folder_details_not_linked": "غير مربوط بأي صفحة حالياً",
+        "drive_folder_details_linked_to": "مربوط بـ",
         "meta_upload_no_assets": "لا توجد صفحات مرتبطة أو متاحة لهذا التوكن ❌",
         "meta_upload_choose_page": "اختر الصفحة:",
         "meta_upload_page_not_found": "الصفحة غير موجودة ❌",
@@ -137,9 +154,21 @@ TEXTS = {
         ),
         "meta_upload_instagram_not_connected": "هذه الصفحة غير مرتبطة بحساب انستغرام أو لا يوجد IG User ID ❌",
         "meta_upload_choose_when": "متى تريد النشر؟",
+        "meta_upload_choose_schedule_backend": "اختر مكان تنفيذ الجدولة:",
+        "meta_upload_schedule_backend_bot_hint": "الجدولة ستتم داخل البوت (المسار الحالي).",
+        "meta_upload_schedule_backend_meta_hint": "الجدولة ستتم عبر Meta مباشرة.",
+        "meta_upload_schedule_progress_backend": (
+            "جارٍ تنفيذ الجدولة على: {backend}...\n"
+            "الرجاء الانتظار 🔄"
+        ),
+        "meta_upload_schedule_fallback_to_bot": (
+            "تعذر إكمال الجدولة عبر Meta.\n"
+            "تم التحويل تلقائياً إلى الجدولة على البوت وجارٍ المتابعة 🔄"
+        ),
         "meta_upload_when_now_label": "الآن",
-        "meta_upload_enter_datetime_future": "أرسل وقت الجدولة بصيغة: `YYYY-MM-DD HH:MM` (مثال: 2026-03-19 14:30)",
+        "meta_upload_enter_datetime_future": "أرسل وقت الجدولة بصيغة: `YYYY-MM-DD HH:MM` (مثال: <code>2026-03-19 14:30</code>)",
         "meta_upload_invalid_datetime_format": "صيغة التاريخ غير صحيحة ❌",
+        "meta_upload_datetime_must_be_future": "وقت الجدولة يجب أن يكون في المستقبل ❌",
         "meta_upload_preview_title": "معاينة النشر",
         "meta_upload_preview_page": "الصفحة",
         "meta_upload_preview_post_type": "نوع المنشور",
@@ -154,6 +183,11 @@ TEXTS = {
         "meta_upload_preview_confirmation_hint": "اضغط تأكيد لتأكيد النشر.",
         "meta_upload_scheduled_success": (
             "تمت جدولة النشر ✅\n" "سيتم النشر في: {time}"
+        ),
+        "meta_upload_scheduled_success_backend": (
+            "تمت جدولة النشر ✅\n"
+            "الوقت: {time}\n"
+            "طريقة الجدولة: {backend}"
         ),
         "meta_upload_publish_failed": ("فشل النشر ❌\n" "السبب: {err}"),
         "meta_upload_publish_failed_unexpected": (
@@ -208,6 +242,10 @@ TEXTS = {
             "الفيديو لا يطابق متطلبات إنستغرام: يلزم MP4 بترتيب «fast start» (ذرة moov في بداية الملف، بدون edit lists). "
             "أعد التصدير مثلاً: ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4 ❌"
         ),
+        "meta_err_ig_video_prepare_failed": (
+            "تعذر تجهيز الفيديو تلقائيا ليتوافق مع متطلبات إنستغرام. "
+            "يرجى إعادة تصديره بصيغة MP4 (H.264/AAC) مع faststart ثم المحاولة مجددا ❌"
+        ),
         "publish_report_title": "نتيجة نشر Meta",
         "publish_report_status": "الحالة",
         "publish_report_page": "البيج",
@@ -216,6 +254,12 @@ TEXTS = {
         "publish_report_status_published": "منشور",
         "publish_report_status_failed": "فشل",
         "publish_report_error": "السبب",
+        "publish_report_drive_archive": "أرشفة Drive",
+        "publish_report_drive_archive_success": "تمت الأرشفة ✅",
+        "publish_report_drive_archive_skipped_no_link": "تم التخطي (لا يوجد مجلد مربوط)",
+        "publish_report_drive_archive_skipped_not_video": "تم التخطي (المنشور ليس فيديو)",
+        "publish_report_drive_archive_not_attempted_meta_failed": "لم تتم المحاولة (فشل نشر Meta)",
+        "publish_report_drive_archive_failed": "فشل الأرشفة ❌",
         "meta_upload_cancelled": "تم إلغاء العملية.",
         "toggle_permission": "تبديل الصلاحية",
         "all_permissions": "جميع الصلاحيات",
@@ -353,6 +397,23 @@ TEXTS = {
         "meta_settings_enter_offset": "Send the UTC offset hours (example: 3 or -5)",
         "meta_settings_invalid_offset": "Invalid value. Use an integer between -12 and 14.",
         "meta_settings_saved_success": "UTC+{offset} updated successfully ✅",
+        "google_drive_settings_title": "Google Drive Settings 🗂",
+        "drive_folder_add_name_instruction": "Send the folder display name.",
+        "drive_folder_add_id_instruction": "Send the Google Drive folder ID.",
+        "drive_folder_added_success": "Folder saved successfully ✅",
+        "drive_folder_removed_success": "Folder removed successfully ✅",
+        "drive_folder_no_items": "No Google Drive folders configured yet ❗️",
+        "drive_folder_remove_instruction": "Choose the folder you want to remove:",
+        "drive_folder_list_title": "Google Drive folders list:",
+        "drive_folder_link_choose_folder": "Choose a folder to link with a Meta asset:",
+        "drive_folder_link_choose_asset": "Choose the Page/IG account to link with this folder:",
+        "drive_folder_unlink_choose_folder": "Choose the folder you want to unlink:",
+        "drive_folder_link_saved_success": "Folder linked successfully ✅",
+        "drive_folder_unlink_saved_success": "Folder unlinked successfully ✅",
+        "drive_folder_asset_not_found": "Selected asset was not found ❌",
+        "drive_folder_details_title": "Folder details:",
+        "drive_folder_details_not_linked": "Not linked to any page yet",
+        "drive_folder_details_linked_to": "Linked to",
         "meta_upload_no_assets": "No connected/available Pages found for this token ❌",
         "meta_upload_choose_page": "Choose the Business Asset (Page):",
         "meta_upload_page_not_found": "Page not found ❌",
@@ -384,9 +445,21 @@ TEXTS = {
         ),
         "meta_upload_instagram_not_connected": "This Page is not connected to an Instagram account or missing IG User ID ❌",
         "meta_upload_choose_when": "When do you want to publish?",
+        "meta_upload_choose_schedule_backend": "Choose scheduling backend:",
+        "meta_upload_schedule_backend_bot_hint": "Scheduling will run inside the bot (current flow).",
+        "meta_upload_schedule_backend_meta_hint": "Scheduling will be delegated directly to Meta.",
+        "meta_upload_schedule_progress_backend": (
+            "Scheduling on {backend} is in progress...\n"
+            "Please wait 🔄"
+        ),
+        "meta_upload_schedule_fallback_to_bot": (
+            "Could not complete scheduling via Meta.\n"
+            "Automatically switched to bot scheduling and continuing now 🔄"
+        ),
         "meta_upload_when_now_label": "Now",
-        "meta_upload_enter_datetime_future": "Send scheduling time in format: `YYYY-MM-DD HH:MM` (example: 2026-03-19 14:30)",
+        "meta_upload_enter_datetime_future": "Send scheduling time in format: `YYYY-MM-DD HH:MM` (example: <code>2026-03-19 14:30</code>)",
         "meta_upload_invalid_datetime_format": "Invalid datetime format ❌",
+        "meta_upload_datetime_must_be_future": "Scheduled time must be in the future ❌",
         "meta_upload_preview_title": "Publish Preview",
         "meta_upload_preview_page": "Page",
         "meta_upload_preview_post_type": "Post type",
@@ -401,6 +474,11 @@ TEXTS = {
         "meta_upload_preview_confirmation_hint": "Press Confirm to proceed.",
         "meta_upload_scheduled_success": (
             "Publish scheduled ✅\n" "Will publish at: {time}"
+        ),
+        "meta_upload_scheduled_success_backend": (
+            "Publish scheduled ✅\n"
+            "Time: {time}\n"
+            "Scheduling backend: {backend}"
         ),
         "meta_upload_publish_failed": ("Publish failed ❌\n" "Reason: {err}"),
         "meta_upload_publish_failed_unexpected": (
@@ -456,6 +534,10 @@ TEXTS = {
             "(moov atom at the beginning, no edit lists). Re-export e.g. "
             "ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4 ❌"
         ),
+        "meta_err_ig_video_prepare_failed": (
+            "Could not automatically prepare the video for Instagram requirements. "
+            "Please re-export as MP4 (H.264/AAC) with faststart and try again ❌"
+        ),
         "publish_report_title": "Meta publish result",
         "publish_report_status": "Status",
         "publish_report_page": "Page",
@@ -464,6 +546,12 @@ TEXTS = {
         "publish_report_status_published": "Published",
         "publish_report_status_failed": "Failed",
         "publish_report_error": "Reason",
+        "publish_report_drive_archive": "Drive archive",
+        "publish_report_drive_archive_success": "Archived ✅",
+        "publish_report_drive_archive_skipped_no_link": "Skipped (no linked folder)",
+        "publish_report_drive_archive_skipped_not_video": "Skipped (not a video post)",
+        "publish_report_drive_archive_not_attempted_meta_failed": "Not attempted (Meta publish failed)",
+        "publish_report_drive_archive_failed": "Archive failed ❌",
         "meta_upload_cancelled": "Operation cancelled.",
         "toggle_permission": "Toggle Permission",
         "all_permissions": "All Permissions",
@@ -547,6 +635,12 @@ BUTTONS = {
         "manage_users_settings": "إدارة المستخدمين 👥",
         "export_users_to_excel": "تصدير المستخدمين إلى Excel 📊",
         "meta_settings": "إعدادات ميتا 🪄",
+        "google_drive_settings": "إعدادات Google Drive 🗂",
+        "add_drive_folder": "إضافة مجلد ➕",
+        "remove_drive_folder": "حذف مجلد ✖️",
+        "show_drive_folders": "عرض المجلدات 👓",
+        "link_drive_folder": "ربط مجلد مع Meta 🔗",
+        "unlink_drive_folder": "فك الربط ✂️",
         "change_meta_offset": "تغيير UTC offset",
         "post_type_reel": "ريلز",
         "post_type_story": "ستوري",
@@ -556,6 +650,8 @@ BUTTONS = {
         "platform_both": "كلاهما",
         "when_now": "الآن",
         "when_schedule": "جدولة",
+        "schedule_backend_bot": "على البوت",
+        "schedule_backend_meta": "على Meta (تجريبي)",
         "skip_media": "تخطي الوسائط ⬅️",
         "skip_caption": "تخطي الكابشن ⬅️",
         "confirm_publish": "تأكيد ✅",
@@ -563,6 +659,7 @@ BUTTONS = {
         "upload_to_meta": "رفع إلى ميتا 📤",
         "permission_upload_to_meta": "رفع إلى ميتا",
         "permission_manage_meta_settings": "إدارة إعدادات ميتا",
+        "permission_manage_google_drive_settings": "إدارة إعدادات Google Drive",
     },
     models.Language.ENGLISH: {
         "check_joined": "Verify ✅",
@@ -613,6 +710,12 @@ BUTTONS = {
         "manage_users_settings": "Manage Users 👥",
         "export_users_to_excel": "Export Users to Excel 📊",
         "meta_settings": "Meta Settings 🪄",
+        "google_drive_settings": "Google Drive Settings 🗂",
+        "add_drive_folder": "Add Folder ➕",
+        "remove_drive_folder": "Remove Folder ✖️",
+        "show_drive_folders": "Show Folders 👓",
+        "link_drive_folder": "Link Folder to Meta 🔗",
+        "unlink_drive_folder": "Unlink ✂️",
         "change_meta_offset": "Change UTC offset",
         "post_type_reel": "Reel",
         "post_type_story": "Story",
@@ -622,6 +725,8 @@ BUTTONS = {
         "platform_both": "Both",
         "when_now": "Now",
         "when_schedule": "Schedule",
+        "schedule_backend_bot": "On bot",
+        "schedule_backend_meta": "On Meta (experimental)",
         "skip_media": "Skip media ⬅️",
         "skip_caption": "Skip caption ⬅️",
         "confirm_publish": "Confirm ✅",
@@ -629,6 +734,7 @@ BUTTONS = {
         "upload_to_meta": "Upload to Meta 📤",
         "permission_upload_to_meta": "Upload to Meta",
         "permission_manage_meta_settings": "Manage Meta Settings",
+        "permission_manage_google_drive_settings": "Manage Google Drive Settings",
     },
 }
 

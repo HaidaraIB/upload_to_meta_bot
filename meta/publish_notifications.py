@@ -1,7 +1,7 @@
 import copy
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Any
 from urllib.parse import urlparse
@@ -130,7 +130,11 @@ def build_publish_report_html(
     t = TEXTS[lang]
 
     when = report_at_utc or datetime.now(timezone.utc)
-    dt_str = when.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    with models.session_scope() as s:
+        settings = models.GeneralSettings.get_or_create(s)
+        offset_hours = settings.meta_timezone_offset_hours
+    report_local = when + timedelta(hours=offset_hours)
+    dt_str = report_local.strftime("%Y-%m-%d %H:%M")
 
     status_key = (
         "publish_report_status_published"
@@ -152,6 +156,17 @@ def build_publish_report_html(
         f"<b>{escape(t['publish_report_datetime'])}</b>: {escape(dt_str)}",
         f"<b>{escape(t['publish_report_admin'])}</b>: {escape(admin_display)}",
     ]
+
+    drive_archive_status = payload.get("_drive_archive_status")
+    if drive_archive_status:
+        drive_key = f"publish_report_drive_archive_{drive_archive_status}"
+        drive_text = t.get(drive_key, str(drive_archive_status))
+        if drive_archive_status == "failed" and payload.get("_drive_archive_error"):
+            err = _sanitize_text(str(payload.get("_drive_archive_error")), max_len=200)
+            drive_text = f"{drive_text}: {err}"
+        lines.append(
+            f"<b>{escape(t['publish_report_drive_archive'])}</b>: {escape(str(drive_text))}"
+        )
 
     if status != "published" and last_error:
         err = _sanitize_text(_truncate_string(last_error, 300), max_len=300)

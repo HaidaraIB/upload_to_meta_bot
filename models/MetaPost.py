@@ -36,12 +36,16 @@ class MetaPost(Base):
     media_file_id = sa.Column(sa.String, nullable=True)  # Telegram file_id (source)
     instagram_image_url = sa.Column(sa.Text, nullable=True)  # required for IG photo
     caption = sa.Column(sa.Text, nullable=True)  # caption/text
-    platforms = sa.Column(sa.Text, nullable=False)  # "instagram,facebook" (comma-separated)
+    platforms = sa.Column(
+        sa.Text, nullable=False
+    )  # "instagram,facebook" (comma-separated)
 
     # Scheduling (Step 6)
     schedule_mode = sa.Column(sa.String, nullable=False)  # now|schedule
     scheduled_utc_iso = sa.Column(sa.String, nullable=True)  # ISO string in UTC
-    scheduled_local_text = sa.Column(sa.String, nullable=True)  # user-entered text (for audit)
+    scheduled_local_text = sa.Column(
+        sa.String, nullable=True
+    )  # user-entered text (for audit)
 
     # Result
     status = sa.Column(
@@ -52,7 +56,5 @@ class MetaPost(Base):
     meta_response = sa.Column(sa.Text, nullable=True)
     last_error = sa.Column(sa.Text, nullable=True)
 
-
     created_at = sa.Column(sa.DateTime, default=datetime.now)
     updated_at = sa.Column(sa.DateTime, default=datetime.now, onupdate=datetime.now)
-

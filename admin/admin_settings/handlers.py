@@ -448,6 +448,10 @@ async def show_admin_permissions(update: Update, context: ContextTypes.DEFAULT_T
                 models.Permission.MANAGE_META_SETTINGS: TEXTS[lang].get(
                     "permission_manage_meta_settings", "Manage Meta Settings"
                 ),
+                models.Permission.MANAGE_GOOGLE_DRIVE_SETTINGS: TEXTS[lang].get(
+                    "permission_manage_google_drive_settings",
+                    "Manage Google Drive Settings",
+                ),
                 models.Permission.MANAGE_USERS: TEXTS[lang].get(
                     "permission_manage_users", "Manage Users"
                 ),

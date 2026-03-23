@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from datetime import datetime, timedelta, timezone
 
 from telegram import InlineKeyboardMarkup, ReplyKeyboardRemove, Update
@@ -33,8 +34,11 @@ from admin.meta_upload.keyboards import (
     build_platform_keyboard,
     build_post_type_keyboard,
     build_preview_keyboard,
+    build_schedule_backend_keyboard,
     build_when_keyboard,
 )
+
+logger = logging.getLogger(__name__)
 
 
 (
@@ -46,8 +50,9 @@ from admin.meta_upload.keyboards import (
     GET_IMAGE_URL,
     WHEN_CHOOSE,
     ENTER_DATETIME,
+    CHOOSE_SCHEDULE_BACKEND,
     PREVIEW,
-) = range(9)
+) = range(10)
 
 _VIDEO_DOC_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
 
@@ -627,9 +632,15 @@ async def enter_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         local_dt = datetime.strptime(raw, "%Y-%m-%d %H:%M")
     except ValueError:
-        await update.message.reply_text(
-            text=TEXTS[lang]["meta_upload_invalid_datetime_format"]
-        )
+        if update.message:
+            await update.message.reply_text(
+                text=TEXTS[lang]["meta_upload_invalid_datetime_format"]
+            )
+        else:
+            await update.callback_query.answer(
+                text=TEXTS[lang]["meta_upload_invalid_datetime_format"],
+                show_alert=True,
+            )
         return ENTER_DATETIME
 
     with models.session_scope() as s:
@@ -639,8 +650,50 @@ async def enter_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     scheduled_utc = local_dt.replace(tzinfo=timezone.utc) - timedelta(
         hours=offset_hours
     )
+    if scheduled_utc <= datetime.now(timezone.utc):
+        if update.message:
+            await update.message.reply_text(
+                text=TEXTS[lang]["meta_upload_datetime_must_be_future"]
+            )
+        else:
+            await update.callback_query.answer(
+                text=TEXTS[lang]["meta_upload_datetime_must_be_future"],
+                show_alert=True,
+            )
+        return ENTER_DATETIME
     context.user_data["meta_upload"]["scheduled_utc"] = scheduled_utc.isoformat()
     context.user_data["meta_upload"]["schedule_mode"] = "schedule"
+
+    keyboard = build_schedule_backend_keyboard(lang)
+    keyboard.append(build_back_button("back_to_enter_datetime", lang=lang))
+    keyboard.append(build_back_to_home_page_button(lang=lang, is_admin=True)[0])
+    if update.message:
+        await update.message.reply_text(
+            text=TEXTS[lang]["meta_upload_choose_schedule_backend"],
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    else:
+        await update.callback_query.edit_message_text(
+            text=TEXTS[lang]["meta_upload_choose_schedule_backend"],
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    return CHOOSE_SCHEDULE_BACKEND
+
+
+back_to_enter_datetime = choose_when
+
+
+async def choose_schedule_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (
+        PrivateChatAndAdmin().filter(update)
+        and PermissionFilter(Permission.UPLOAD_TO_META).filter(update)
+    ):
+        return ConversationHandler.END
+
+    lang = get_lang(update.effective_user.id)
+    if not update.callback_query.data.startswith("back"):
+        chosen = update.callback_query.data.replace("schedule_backend_", "")
+        context.user_data["meta_upload"]["schedule_backend"] = chosen
 
     text = _build_preview_text(
         lang,
@@ -650,26 +703,20 @@ async def enter_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "platforms": context.user_data["meta_upload"].get("platforms"),
             "media_type": context.user_data["meta_upload"].get("media_type"),
             "caption": context.user_data["meta_upload"].get("caption"),
-            "when_label": raw,
+            "when_label": context.user_data["meta_upload"].get("scheduled_utc_raw"),
         },
     )
     keyboard = build_preview_keyboard(lang)
-    keyboard.append(build_back_button("back_to_enter_datetime", lang=lang))
+    keyboard.append(build_back_button("back_to_choose_schedule_backend", lang=lang))
     keyboard.append(build_back_to_home_page_button(lang=lang, is_admin=True)[0])
-    if update.message:
-        await update.message.reply_text(
-            text=text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-    else:
-        await update.callback_query.edit_message_text(
-            text=text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
+    await update.callback_query.edit_message_text(
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
     return PREVIEW
 
 
-back_to_enter_datetime = choose_when
+back_to_choose_schedule_backend = enter_datetime
 
 
 async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -703,6 +750,7 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     schedule_mode = payload.get("schedule_mode") or "now"
+    schedule_backend = payload.get("schedule_backend") or "bot"
     status = "scheduled" if schedule_mode == "schedule" else "created"
 
     with models.session_scope() as s:
@@ -736,6 +784,10 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Lazy import to avoid startup errors during partial dev
     from meta.publishers import publish_to_meta  # noqa: F401
     from meta.publish_notifications import send_publish_report  # noqa: F401
+    from google_drive.archive import (
+        persist_drive_upload_status,
+        upload_video_to_linked_drive_folder,
+    )
 
     if schedule_mode == "now":
         pl_set = set(payload.get("platforms") or [])
@@ -749,12 +801,43 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         try:
             result = await publish_to_meta(payload=payload, context=context)
+            video_bytes = payload.pop("_post_publish_video_bytes", None)
+            if video_bytes:
+                try:
+                    drive_result = await upload_video_to_linked_drive_folder(
+                        payload, video_bytes
+                    )
+                    if drive_result:
+                        payload["_drive_archive_status"] = "success"
+                        payload["_drive_archive_file_id"] = drive_result.get("id")
+                        payload["_drive_archive_folder_id"] = drive_result.get(
+                            "folder_id"
+                        )
+                        logger.info(
+                            "Drive archival success (immediate): page_id=%s file_id=%s",
+                            payload.get("page_id"),
+                            drive_result.get("id"),
+                        )
+                    else:
+                        payload["_drive_archive_status"] = "skipped_no_link"
+                        logger.info(
+                            "Drive archival skipped (immediate): page_id=%s no linked folder",
+                            payload.get("page_id"),
+                        )
+                except Exception:
+                    payload["_drive_archive_status"] = "failed"
+                    payload["_drive_archive_error"] = "drive_upload_failed"
+                    logger.exception(
+                        "Drive archival failed after immediate publish: page_id=%s",
+                        payload.get("page_id"),
+                    )
             with models.session_scope() as s:
                 meta_post = s.get(models.MetaPost, meta_post_id)
                 if meta_post:
                     meta_post.status = "published"
                     meta_post.meta_response = result
                     meta_post.last_error = None
+            persist_drive_upload_status(meta_post_id=meta_post_id, payload=payload)
 
             await send_publish_report(
                 context,
@@ -774,6 +857,7 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from meta.errors import format_meta_publish_failure
 
             failure_text = format_meta_publish_failure(e, lang)
+            payload.setdefault("_drive_archive_status", "not_attempted_meta_failed")
 
             with models.session_scope() as s:
                 meta_post = s.get(models.MetaPost, meta_post_id)
@@ -781,6 +865,7 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     meta_post.status = "failed"
                     meta_post.meta_response = None
                     meta_post.last_error = str(e)
+            persist_drive_upload_status(meta_post_id=meta_post_id, payload=payload)
 
             await send_publish_report(
                 context,
@@ -798,41 +883,62 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return ConversationHandler.END
 
-    from jobs import schedule_publish_to_meta
-
-    scheduled_dt = payload["scheduled_utc_dt"]
-    context.job_queue.run_once(
-        callback=schedule_publish_to_meta,
-        name=f"schedule_publish_to_meta",
-        when=scheduled_dt,
-        data={
-            "payload": payload,
-            "lang": lang,
-            "meta_post_id": meta_post_id,
-        },
-        user_id=update.effective_user.id,
-        chat_id=update.effective_chat.id,
-        job_kwargs={
-            "misfire_grace_time": None,
-        },
+    from meta.scheduling_backends import (
+        schedule_with_bot_backend,
+        schedule_with_meta_backend,
     )
-    # Log scheduling so we can correlate execution logs with the user request.
-    import logging
+    from meta.errors import format_meta_publish_failure
 
-    logger = logging.getLogger(__name__)
-    logger.info(
-        "Scheduled publish queued: meta_post_id=%s user_id=%s page_id=%s post_type=%s platforms=%s when=%s",
-        meta_post_id,
-        update.effective_user.id,
-        payload.get("page_id"),
-        payload.get("post_type"),
-        payload.get("platforms"),
-        scheduled_dt.isoformat() if scheduled_dt else None,
+    chosen_backend_label = (
+        BUTTONS[lang]["schedule_backend_meta"]
+        if schedule_backend == "meta"
+        else BUTTONS[lang]["schedule_backend_bot"]
     )
     await update.callback_query.edit_message_text(
-        text=TEXTS[lang]["meta_upload_scheduled_success"].format(
-            time=context.user_data["meta_upload"].get("scheduled_utc")
+        text=TEXTS[lang]["meta_upload_schedule_progress_backend"].format(
+            backend=chosen_backend_label
         ),
+    )
+
+    try:
+        if schedule_backend == "meta":
+            scheduled_success_text = await schedule_with_meta_backend(
+                update,
+                context,
+                payload=payload,
+                lang=lang,
+                meta_post_id=meta_post_id,
+            )
+        else:
+            await schedule_with_bot_backend(
+                context,
+                payload=payload,
+                lang=lang,
+                meta_post_id=meta_post_id,
+                user_id=update.effective_user.id,
+                chat_id=update.effective_chat.id,
+            )
+            scheduled_success_text = TEXTS[lang][
+                "meta_upload_scheduled_success_backend"
+            ].format(
+                time=context.user_data["meta_upload"].get("scheduled_utc"),
+                backend=BUTTONS[lang]["schedule_backend_bot"],
+            )
+    except Exception as e:
+        failure_text = format_meta_publish_failure(e, lang)
+        with models.session_scope() as s:
+            meta_post = s.get(models.MetaPost, meta_post_id)
+            if meta_post:
+                meta_post.status = "failed"
+                meta_post.last_error = str(e)
+        await update.callback_query.edit_message_text(
+            text=failure_text,
+            reply_markup=build_admin_keyboard(lang, user_id=update.effective_user.id),
+        )
+        return ConversationHandler.END
+
+    await update.callback_query.edit_message_text(
+        text=scheduled_success_text,
         reply_markup=build_admin_keyboard(lang, user_id=update.effective_user.id),
     )
     return ConversationHandler.END
@@ -842,20 +948,20 @@ meta_upload_handler = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(
             callback=meta_upload_start,
-            pattern="^meta_upload$|^back_to_meta_upload$",
+            pattern=r"^meta_upload$",
         )
     ],
     states={
         CHOOSE_PAGE: [
             CallbackQueryHandler(
                 callback=select_page,
-                pattern="^select_page_",
+                pattern=r"^select_page_",
             )
         ],
         CHOOSE_POST_TYPE: [
             CallbackQueryHandler(
                 callback=select_post_type,
-                pattern="^post_type_",
+                pattern=r"^post_type_",
             )
         ],
         GET_MEDIA: [
@@ -866,7 +972,7 @@ meta_upload_handler = ConversationHandler(
             ),
             CallbackQueryHandler(
                 callback=skip_media,
-                pattern="^skip_media$",
+                pattern=r"^skip_media$",
             ),
         ],
         GET_CAPTION: [
@@ -876,13 +982,13 @@ meta_upload_handler = ConversationHandler(
             ),
             CallbackQueryHandler(
                 callback=skip_caption,
-                pattern="^skip_caption$",
+                pattern=r"^skip_caption$",
             ),
         ],
         CHOOSE_PLATFORM: [
             CallbackQueryHandler(
                 callback=choose_platform,
-                pattern="^platform_",
+                pattern=r"^platform_",
             )
         ],
         GET_IMAGE_URL: [
@@ -894,7 +1000,7 @@ meta_upload_handler = ConversationHandler(
         WHEN_CHOOSE: [
             CallbackQueryHandler(
                 callback=choose_when,
-                pattern="^when_",
+                pattern=r"^when_",
             )
         ],
         ENTER_DATETIME: [
@@ -903,10 +1009,16 @@ meta_upload_handler = ConversationHandler(
                 callback=enter_datetime,
             )
         ],
+        CHOOSE_SCHEDULE_BACKEND: [
+            CallbackQueryHandler(
+                callback=choose_schedule_backend,
+                pattern=r"^schedule_backend_",
+            )
+        ],
         PREVIEW: [
             CallbackQueryHandler(
                 callback=confirm_publish,
-                pattern="^confirm_publish$",
+                pattern=r"^confirm_publish$",
             ),
         ],
     },
@@ -931,6 +1043,9 @@ meta_upload_handler = ConversationHandler(
             back_to_choose_when_image_url, r"^back_to_choose_when_image_url$"
         ),
         CallbackQueryHandler(back_to_enter_datetime, r"^back_to_enter_datetime$"),
+        CallbackQueryHandler(
+            back_to_choose_schedule_backend, r"^back_to_choose_schedule_backend$"
+        ),
     ],
     name="meta_upload_handler",
     persistent=True,

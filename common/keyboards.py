@@ -44,6 +44,12 @@ def build_admin_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=BUTTONS[lang]["google_drive_settings"],
+                    callback_data="google_drive_settings",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=BUTTONS[lang]["upload_to_meta"],
                     callback_data="meta_upload",
                 )
@@ -97,6 +103,18 @@ def build_admin_keyboard(
                     InlineKeyboardButton(
                         text=BUTTONS[lang]["meta_settings"],
                         callback_data="meta_settings",
+                    )
+                ]
+            )
+
+        if HasPermission.check(
+            user_id, models.Permission.MANAGE_GOOGLE_DRIVE_SETTINGS
+        ):
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=BUTTONS[lang]["google_drive_settings"],
+                        callback_data="google_drive_settings",
                     )
                 ]
             )

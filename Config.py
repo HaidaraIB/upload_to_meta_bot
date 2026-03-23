@@ -56,6 +56,21 @@ class Config:
     except ValueError:
         TELEGRAM_MEDIA_MAX_BYTES = 200 * 1024 * 1024
 
+    FFMPEG_BIN = os.getenv("FFMPEG_BIN", "ffmpeg")
+
+    _ig_video_autofix_enabled_raw = os.getenv("IG_VIDEO_AUTOFIX_ENABLED", "true").lower()
+    IG_VIDEO_AUTOFIX_ENABLED = _ig_video_autofix_enabled_raw in ("1", "true", "yes", "on")
+
+    _ig_video_autofix_reencode_raw = os.getenv(
+        "IG_VIDEO_AUTOFIX_REENCODE_FALLBACK", "true"
+    ).lower()
+    IG_VIDEO_AUTOFIX_REENCODE_FALLBACK = _ig_video_autofix_reencode_raw in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
     # Supabase Storage (for auto-providing Instagram image_url)
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")

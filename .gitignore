@@ -7,3 +7,5 @@ __pycache__/
 test.py
 errors.txt
 test-results/
+google_drive/credentials/credentials.json
+google_drive/credentials/refresh_token.txt

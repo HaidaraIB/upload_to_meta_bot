@@ -67,6 +67,21 @@ def build_when_keyboard(lang: models.Language):
     ]
 
 
+def build_schedule_backend_keyboard(lang: models.Language):
+    return [
+        [
+            InlineKeyboardButton(
+                text=BUTTONS[lang]["schedule_backend_bot"],
+                callback_data="schedule_backend_bot",
+            ),
+            InlineKeyboardButton(
+                text=BUTTONS[lang]["schedule_backend_meta"],
+                callback_data="schedule_backend_meta",
+            ),
+        ]
+    ]
+
+
 def build_media_keyboard(lang: models.Language, *, post_type: str | None = None):
     """
     - feed: يسمح بـ text-only عبر skip_media (Facebook يحتاج caption/text).

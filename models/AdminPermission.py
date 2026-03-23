@@ -12,6 +12,7 @@ class Permission(Enum):
     MANAGE_USERS = "manage_users"
     UPLOAD_TO_META = "upload_to_meta"
     MANAGE_META_SETTINGS = "manage_meta_settings"
+    MANAGE_GOOGLE_DRIVE_SETTINGS = "manage_google_drive_settings"
 
 
 class AdminPermission(Base):

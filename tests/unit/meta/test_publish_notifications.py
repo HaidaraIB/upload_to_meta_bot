@@ -39,7 +39,7 @@ def test_build_publish_report_html_arabic_published():
     assert "البيج" in html
     assert "Test Page" in html
     assert "التاريخ والوقت" in html
-    assert "2026-03-21 12:00 UTC" in html
+    assert "2026-03-21 15:00" in html
     assert "الادمن" in html
     assert "123" in html
     assert "السبب" not in html

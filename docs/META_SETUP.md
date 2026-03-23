@@ -36,6 +36,9 @@
 - `META_GRAPH_VERSION=v25.0` (افتراضيًا v25.0 إن لم تحدده)
 - `TELEGRAM_MEDIA_MAX_MB=200` — أقصى حجم (ميغابايت) لتحميل الوسائط من تيليجرام عبر **Telethon** قبل النشر على ميتا (الافتراضي 200). يتطلّب `API_ID` و`API_HASH` و`BOT_TOKEN` كما في بقية البوت.
 - `META_HTTP_TIMEOUT_TOTAL=600` — مهلة بالثواني لطلبات Graph و`rupload` أثناء النشر (الافتراضي 600). ارفعها إذا كان الرفع بطيئاً أو الملفات كبيرة.
+- `FFMPEG_BIN=ffmpeg` — مسار/اسم تنفيذ `ffmpeg` المستخدم لتجهيز فيديو Instagram تلقائياً.
+- `IG_VIDEO_AUTOFIX_ENABLED=true` — تفعيل محاولة إصلاح MP4 غير المتوافق (faststart) قبل الرفع.
+- `IG_VIDEO_AUTOFIX_REENCODE_FALLBACK=true` — عند فشل `-c copy`، جرّب إعادة ترميز H.264/AAC مع faststart.
 
 ### فيديو إنستغرام (ريلز / ستوري / فيديو) وخطأ `ProcessingFailedError`
 إذا نجأ إنشاء الحاوية ثم فشل الرفع إلى `rupload.facebook.com` برسالة مثل **`ProcessingFailedError`** / **`Request processing failed`**، فالملف غالباً **وصل إلى ميتا** لكن **لم تُقبل معالجة الفيديو** (ليست بالضرورة مشكلة في البوت).
@@ -51,6 +54,7 @@
 - للريلز: نسبة عرض مناسبة (غالباً **9:16**)، مدة ضمن حدود إنستغرام، وحجم/دقة معقولة.
 - وثائق ميتا تطلب **MP4 بدون edit lists** و**ذرة `moov` في مقدمة الملف** (*fast start*). بدون ذلك يفشل الرفع أحياناً بـ `ProcessingFailedError`. مثال إعادة ترتيب بدون إعادة ترميز:  
   `ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4`
+- البوت الآن يحاول تنفيذ هذا الإصلاح تلقائياً عبر `ffmpeg` قبل النشر على Instagram. إذا تعذر الإصلاح، سيظهر للمستخدم سبب مبسط مع اقتراح إعادة التصدير.
 - إعادة تصدير الفيديو من أداة مثل HandBrake أو FFmpeg ثم إعادة الرفع.
 
 راجع أيضاً [Resumable uploads - Instagram Platform](https://developers.facebook.com/docs/instagram-platform/content-publishing/resumable-uploads/) لأحدث المتطلبات.

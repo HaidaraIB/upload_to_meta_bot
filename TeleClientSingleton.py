@@ -11,6 +11,11 @@ class TeleClientSingleton:
     download_lock = asyncio.Lock()
 
     @classmethod
+    def get_client_sync(cls) -> TelegramClient:
+        if cls._instance and cls._instance.is_connected():
+            return cls._instance
+
+    @classmethod
     async def get_client(cls) -> TelegramClient:
         if cls._instance and cls._instance.is_connected():
             return cls._instance
