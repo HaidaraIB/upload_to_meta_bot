@@ -130,28 +130,31 @@ def build_publish_report_html(
     t = TEXTS[lang]
 
     when = report_at_utc or datetime.now(timezone.utc)
-    with models.session_scope() as s:
-        settings = models.GeneralSettings.get_or_create(s)
-        offset_hours = settings.meta_timezone_offset_hours
-    report_local = when + timedelta(hours=offset_hours)
-    dt_str = report_local.strftime("%Y-%m-%d %H:%M")
 
-    status_key = (
-        "publish_report_status_published"
-        if status == "published"
-        else "publish_report_status_failed"
-    )
-    status_text = t[status_key]
+    head_key_by_status = {
+        "published": "publish_report_head_published",
+        "scheduled": "publish_report_head_scheduled",
+        "failed": "publish_report_head_failed",
+    }
+    headline_key = head_key_by_status.get(status, "publish_report_head_failed")
 
     page_name = payload.get("page_name")
     page_display = page_name if page_name is not None else "—"
 
     admin_id = payload.get("admin_id")
-    admin_display = str(admin_id) if admin_id is not None else "—"
+    admin_display = "—"
+    with models.session_scope() as s:
+        settings = models.GeneralSettings.get_or_create(s)
+        offset_hours = settings.meta_timezone_offset_hours
+        if admin_id is not None:
+            row = s.get(models.User, int(admin_id))
+            admin_display = f"@{row.username}" if row.username else row.name
+
+    report_local = when + timedelta(hours=offset_hours)
+    dt_str = report_local.strftime("%Y-%m-%d %H:%M")
 
     lines: list[str] = [
-        f"<b>{escape(t['publish_report_title'])}</b>",
-        f"<b>{escape(t['publish_report_status'])}</b>: {escape(status_text)}",
+        f"<b>{escape(t[headline_key])}</b>",
         f"<b>{escape(t['publish_report_page'])}</b>: {escape(str(page_display))}",
         f"<b>{escape(t['publish_report_datetime'])}</b>: {escape(dt_str)}",
         f"<b>{escape(t['publish_report_admin'])}</b>: {escape(admin_display)}",
@@ -170,9 +173,7 @@ def build_publish_report_html(
 
     if status != "published" and last_error:
         err = _sanitize_text(_truncate_string(last_error, 300), max_len=300)
-        lines.append(
-            f"<b>{escape(t['publish_report_error'])}</b>: {escape(err)}"
-        )
+        lines.append(f"<b>{escape(t['publish_report_error'])}</b>: {escape(err)}")
 
     return "\n".join(lines)
 
@@ -240,9 +241,7 @@ async def send_publish_report(
                     "Failed to send publish report video to channel; falling back to text"
                 )
         elif (
-            not media_file_id
-            and isinstance(image_url, str)
-            and _is_http_url(image_url)
+            not media_file_id and isinstance(image_url, str) and _is_http_url(image_url)
         ):
             try:
                 await context.bot.send_photo(

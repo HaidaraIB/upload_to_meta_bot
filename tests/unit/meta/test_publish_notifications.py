@@ -33,9 +33,7 @@ def test_build_publish_report_html_arabic_published():
         last_error=None,
         report_at_utc=datetime(2026, 3, 21, 12, 0, tzinfo=timezone.utc),
     )
-    assert "نتيجة نشر Meta" in html
-    assert "الحالة" in html
-    assert "منشور" in html
+    assert "تم النشر" in html
     assert "البيج" in html
     assert "Test Page" in html
     assert "التاريخ والوقت" in html
@@ -81,8 +79,8 @@ def test_build_publish_report_lang_string_english():
         last_error=None,
         report_at_utc=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     )
-    assert "Meta publish result" in html
     assert "Published" in html
+    assert "Page" in html
 
 
 @pytest.mark.asyncio
@@ -114,7 +112,7 @@ async def test_send_publish_report_calls_send_video_with_caption(mock_config):
     call_kw = context.bot.send_video.await_args.kwargs
     assert call_kw["chat_id"] == channel_id
     assert call_kw["video"] == "file_id_xyz"
-    assert "منشور" in call_kw["caption"]
+    assert "تم النشر" in call_kw["caption"]
 
 
 @pytest.mark.asyncio

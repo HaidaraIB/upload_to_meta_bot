@@ -246,13 +246,12 @@ TEXTS = {
             "تعذر تجهيز الفيديو تلقائيا ليتوافق مع متطلبات إنستغرام. "
             "يرجى إعادة تصديره بصيغة MP4 (H.264/AAC) مع faststart ثم المحاولة مجددا ❌"
         ),
-        "publish_report_title": "نتيجة نشر Meta",
-        "publish_report_status": "الحالة",
+        "publish_report_head_published": "تم النشر",
+        "publish_report_head_scheduled": "تم الجدولة",
+        "publish_report_head_failed": "فشل النشر",
         "publish_report_page": "البيج",
         "publish_report_datetime": "التاريخ والوقت",
         "publish_report_admin": "الادمن",
-        "publish_report_status_published": "منشور",
-        "publish_report_status_failed": "فشل",
         "publish_report_error": "السبب",
         "publish_report_drive_archive": "أرشفة Drive",
         "publish_report_drive_archive_success": "تمت الأرشفة ✅",
@@ -538,13 +537,12 @@ TEXTS = {
             "Could not automatically prepare the video for Instagram requirements. "
             "Please re-export as MP4 (H.264/AAC) with faststart and try again ❌"
         ),
-        "publish_report_title": "Meta publish result",
-        "publish_report_status": "Status",
+        "publish_report_head_published": "Published",
+        "publish_report_head_scheduled": "Scheduled",
+        "publish_report_head_failed": "Publish failed",
         "publish_report_page": "Page",
         "publish_report_datetime": "Date & time",
         "publish_report_admin": "Admin",
-        "publish_report_status_published": "Published",
-        "publish_report_status_failed": "Failed",
         "publish_report_error": "Reason",
         "publish_report_drive_archive": "Drive archive",
         "publish_report_drive_archive_success": "Archived ✅",

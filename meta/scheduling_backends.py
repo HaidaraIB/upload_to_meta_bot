@@ -47,6 +47,14 @@ async def schedule_with_bot_backend(
         job_kwargs={"misfire_grace_time": None},
     )
 
+    await send_publish_report(
+        context,
+        status="scheduled",
+        meta_post_id=meta_post_id,
+        payload=payload,
+        meta_response=None,
+    )
+
 
 async def schedule_with_meta_backend(
     update: Update,
@@ -85,7 +93,7 @@ async def schedule_with_meta_backend(
 
         await send_publish_report(
             context,
-            status="published",
+            status="scheduled",
             meta_post_id=meta_post_id,
             payload=payload,
             meta_response=result_text,
