@@ -39,6 +39,8 @@
 - `FFMPEG_BIN=ffmpeg` — مسار/اسم تنفيذ `ffmpeg` المستخدم لتجهيز فيديو Instagram تلقائياً.
 - `IG_VIDEO_AUTOFIX_ENABLED=true` — تفعيل محاولة إصلاح MP4 غير المتوافق (faststart) قبل الرفع.
 - `IG_VIDEO_AUTOFIX_REENCODE_FALLBACK=true` — عند فشل `-c copy`، جرّب إعادة ترميز H.264/AAC مع faststart.
+- `IG_VIDEO_REENCODE_IF_INCOMPATIBLE=true` (افتراضي) — استخدام **ffprobe** بجانب `ffmpeg`: إذا كان الفيديو ليس **H.264** أو وُجد صوت وليس **AAC**، يُعاد الترميز تلقائياً إلى ملف مناسب لإنستغرام (غالباً ما ينجح فيسبوك بنفس الملف بينما يفشل إنستغرام بـ `ProcessingFailedError`).
+- `IG_VIDEO_FORCE_REENCODE=false` (افتراضي) — إن وُضع `true`، يُعاد ترميز **كل** فيديو إنستغرام إلى H.264/AAC + faststart (أبطأ وأثقل؛ للاستخدام عند استمرار الفشل رغم الخيارات أعلاه).
 
 ### فيديو إنستغرام (ريلز / ستوري / فيديو) وخطأ `ProcessingFailedError`
 إذا نجأ إنشاء الحاوية ثم فشل الرفع إلى `rupload.facebook.com` برسالة مثل **`ProcessingFailedError`** / **`Request processing failed`**، فالملف غالباً **وصل إلى ميتا** لكن **لم تُقبل معالجة الفيديو** (ليست بالضرورة مشكلة في البوت).
@@ -54,7 +56,7 @@
 - للريلز: نسبة عرض مناسبة (غالباً **9:16**)، مدة ضمن حدود إنستغرام، وحجم/دقة معقولة.
 - وثائق ميتا تطلب **MP4 بدون edit lists** و**ذرة `moov` في مقدمة الملف** (*fast start*). بدون ذلك يفشل الرفع أحياناً بـ `ProcessingFailedError`. مثال إعادة ترتيب بدون إعادة ترميز:  
   `ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4`
-- البوت الآن يحاول تنفيذ هذا الإصلاح تلقائياً عبر `ffmpeg` قبل النشر على Instagram. إذا تعذر الإصلاح، سيظهر للمستخدم سبب مبسط مع اقتراح إعادة التصدير.
+- البوت يحاول تنفيذ ذلك تلقائياً عبر `ffmpeg` (ومع **ffprobe** عند تفعيل `IG_VIDEO_REENCODE_IF_INCOMPATIBLE`) قبل النشر على Instagram. إذا تعذر الإصلاح، سيظهر للمستخدم سبب مبسط مع اقتراح إعادة التصدير.
 - إعادة تصدير الفيديو من أداة مثل HandBrake أو FFmpeg ثم إعادة الرفع.
 
 راجع أيضاً [Resumable uploads - Instagram Platform](https://developers.facebook.com/docs/instagram-platform/content-publishing/resumable-uploads/) لأحدث المتطلبات.

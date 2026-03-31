@@ -71,6 +71,19 @@ class Config:
         "on",
     )
 
+    _ig_reencode_incompatible_raw = os.getenv(
+        "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", "true"
+    ).lower()
+    IG_VIDEO_REENCODE_IF_INCOMPATIBLE = _ig_reencode_incompatible_raw in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+    _ig_force_reencode_raw = os.getenv("IG_VIDEO_FORCE_REENCODE", "false").lower()
+    IG_VIDEO_FORCE_REENCODE = _ig_force_reencode_raw in ("1", "true", "yes", "on")
+
     # Supabase Storage (for auto-providing Instagram image_url)
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")

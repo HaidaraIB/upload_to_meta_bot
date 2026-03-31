@@ -56,3 +56,29 @@ def test_slow_mp4_fix_fails_returns_user_friendly_error(monkeypatch: pytest.Monk
     with pytest.raises(MetaPublishUserError) as cm:
         vn.normalize_instagram_video_bytes(_slow_mp4())
     assert cm.value.message_key == "meta_err_ig_video_prepare_failed"
+
+
+def test_incompatible_codec_triggers_reencode(monkeypatch: pytest.MonkeyPatch):
+    """When ffprobe says non-H264/non-AAC, we re-encode even if MP4 layout is already fast-start."""
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_ENABLED", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_REENCODE_FALLBACK", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_FORCE_REENCODE", False)
+    monkeypatch.setattr(vn, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(
+        vn,
+        "_probe_streams_incompatible_with_instagram",
+        lambda _path: True,
+    )
+    monkeypatch.setattr(vn, "ffmpeg_available", lambda: True)
+
+    def fake_run(cmd: list[str]):
+        out_path = Path(cmd[-1])
+        out_path.write_bytes(_fast_mp4())
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(vn, "_run_ffmpeg", fake_run)
+
+    result = vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert result.changed is True
+    assert result.method == "reencode_faststart"

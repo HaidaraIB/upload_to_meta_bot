@@ -84,7 +84,7 @@ upload_to_meta_bot/
     | `DB_PATH` | Path to SQLite file (e.g. `data/database.sqlite3`) |
     | `META_ACCESS_TOKEN` | Long-lived user/page-capable token for Graph |
 
-    Common optional variables: `LOG_LEVEL`, `ERRORS_CHANNEL`, `PUBLISH_RESULTS_CHANNEL`, `META_GRAPH_VERSION`, `META_HTTP_TIMEOUT_TOTAL`, `TELEGRAM_MEDIA_MAX_MB`, `FFMPEG_BIN`, `IG_VIDEO_AUTOFIX_*`, and Supabase keys for Instagram `image_url` workflows.
+    Common optional variables: `LOG_LEVEL`, `ERRORS_CHANNEL`, `PUBLISH_RESULTS_CHANNEL`, `META_GRAPH_VERSION`, `META_HTTP_TIMEOUT_TOTAL`, `TELEGRAM_MEDIA_MAX_MB`, `FFMPEG_BIN`, `IG_VIDEO_AUTOFIX_*`, `IG_VIDEO_REENCODE_IF_INCOMPATIBLE`, `IG_VIDEO_FORCE_REENCODE`, and Supabase keys for Instagram `image_url` workflows.
 
 5.  **Meta and Instagram**: Follow **[docs/META_SETUP.md](docs/META_SETUP.md)** for app permissions, token setup, scheduling notes, and running tests (including optional live integration).
 
