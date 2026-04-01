@@ -58,6 +58,28 @@ def test_slow_mp4_fix_fails_returns_user_friendly_error(monkeypatch: pytest.Monk
     assert cm.value.message_key == "meta_err_ig_video_prepare_failed"
 
 
+def test_h264_yuv420p10_needs_reencode():
+    assert (
+        vn._h264_stream_needs_reencode_for_ig(
+            codec_name="h264",
+            pix_fmt="yuv420p10le",
+            profile="High",
+        )
+        is True
+    )
+
+
+def test_h264_yuv420p_ok():
+    assert (
+        vn._h264_stream_needs_reencode_for_ig(
+            codec_name="h264",
+            pix_fmt="yuv420p",
+            profile="High",
+        )
+        is False
+    )
+
+
 def test_incompatible_codec_triggers_reencode(monkeypatch: pytest.MonkeyPatch):
     """When ffprobe says non-H264/non-AAC, we re-encode even if MP4 layout is already fast-start."""
     monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_ENABLED", True)

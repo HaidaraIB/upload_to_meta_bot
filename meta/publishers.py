@@ -20,6 +20,37 @@ from meta.video_normalizer import normalize_instagram_video_bytes
 logger = logging.getLogger(__name__)
 
 
+def _platform_error_text(exc: BaseException, max_len: int = 280) -> str:
+    s = str(exc)
+    if len(s) > max_len:
+        return s[: max_len - 1] + "…"
+    return s
+
+
+def _init_publish_platform_results(payload: dict[str, Any]) -> None:
+    """Track per-platform outcome for publish channel reports (instagram + facebook)."""
+    platforms = set(payload.get("platforms") or [])
+    payload["_publish_platform_results"] = {}
+    for key in ("instagram", "facebook"):
+        if key in platforms:
+            payload["_publish_platform_results"][key] = {"outcome": "pending"}
+        else:
+            payload["_publish_platform_results"][key] = {"outcome": "not_selected"}
+
+
+def _mark_pending_not_attempted_pre_publish(payload: dict[str, Any]) -> None:
+    r = payload.get("_publish_platform_results")
+    if not r:
+        return
+    for key in ("instagram", "facebook"):
+        entry = r.get(key)
+        if isinstance(entry, dict) and entry.get("outcome") == "pending":
+            r[key] = {
+                "outcome": "not_attempted",
+                "reason": "pre_publish_failed",
+            }
+
+
 def _max_telegram_media_bytes() -> int:
     return int(getattr(Config, "TELEGRAM_MEDIA_MAX_BYTES", 200 * 1024 * 1024))
 
@@ -462,6 +493,7 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
     )
 
     _validate_publish_payload_rules(payload)
+    _init_publish_platform_results(payload)
     schedule_unix = _meta_schedule_unix(payload)
     publish_now = schedule_unix is None
     graph_token = payload.get("page_access_token") or Config.META_ACCESS_TOKEN
@@ -503,37 +535,48 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
         total=getattr(Config, "META_HTTP_TIMEOUT_TOTAL", 600),
         sock_read=getattr(Config, "META_HTTP_TIMEOUT_TOTAL", 600),
     )
+    platforms_set = set(platforms)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         video_bytes = None
         photo_bytes = None
 
-        if need_video_bytes:
-            video_bytes = await _download_telegram_file(context, payload)
-        if need_photo_bytes:
-            photo_bytes = await _download_telegram_file(context, payload)
+        try:
+            if need_video_bytes:
+                video_bytes = await _download_telegram_file(context, payload)
+            if need_photo_bytes:
+                photo_bytes = await _download_telegram_file(context, payload)
+        except Exception:
+            _mark_pending_not_attempted_pre_publish(payload)
+            raise
 
         results: list[str] = []
 
         if need_instagram_photo_bytes and photo_bytes is not None:
-            # Upload to Supabase so Instagram can fetch it via a public URL.
-            object_path = (
-                f"ig_uploads/{admin_id or 'unknown'}/"
-                f"{int(time.time())}_{uuid.uuid4().hex}.jpg"
-            )
-            logger.info("Uploading IG photo bytes to Supabase: path=%s", object_path)
-            payload["instagram_image_url"] = await upload_bytes_public_url(
-                session=session,
-                bucket=Config.SUPABASE_STORAGE_BUCKET,
-                object_path=object_path,
-                content_type="image/jpeg",
-                file_bytes=photo_bytes,
-            )
-            logger.info("Supabase image_url ready for Instagram.")
+            try:
+                # Upload to Supabase so Instagram can fetch it via a public URL.
+                object_path = (
+                    f"ig_uploads/{admin_id or 'unknown'}/"
+                    f"{int(time.time())}_{uuid.uuid4().hex}.jpg"
+                )
+                logger.info("Uploading IG photo bytes to Supabase: path=%s", object_path)
+                payload["instagram_image_url"] = await upload_bytes_public_url(
+                    session=session,
+                    bucket=Config.SUPABASE_STORAGE_BUCKET,
+                    object_path=object_path,
+                    content_type="image/jpeg",
+                    file_bytes=photo_bytes,
+                )
+                logger.info("Supabase image_url ready for Instagram.")
+            except Exception:
+                _mark_pending_not_attempted_pre_publish(payload)
+                raise
 
         if "instagram" in platforms:
-            logger.info("Publishing on Instagram: post_type=%s media_type=%s", post_type, media_type)
-            results.append(
-                await _publish_instagram(
+            logger.info(
+                "Publishing on Instagram: post_type=%s media_type=%s", post_type, media_type
+            )
+            try:
+                ig_text = await _publish_instagram(
                     session,
                     ig_user_id,
                     post_type,
@@ -545,7 +588,25 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
                     publish_now=publish_now,
                     access_token=graph_token,
                 )
-            )
+                results.append(ig_text)
+                payload["_publish_platform_results"]["instagram"] = {"outcome": "success"}
+            except Exception as e:
+                payload["_publish_platform_results"]["instagram"] = {
+                    "outcome": "failed",
+                    "error": _platform_error_text(e),
+                }
+                if (
+                    "facebook" in platforms_set
+                    and payload["_publish_platform_results"]
+                    .get("facebook", {})
+                    .get("outcome")
+                    == "pending"
+                ):
+                    payload["_publish_platform_results"]["facebook"] = {
+                        "outcome": "not_attempted",
+                        "reason": "previous_platform_failed",
+                    }
+                raise
             if "facebook" in platforms:
                 await _edit_publish_progress_message(
                     context,
@@ -554,9 +615,11 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
                 )
 
         if "facebook" in platforms:
-            logger.info("Publishing on Facebook: post_type=%s media_type=%s", post_type, media_type)
-            results.append(
-                await _publish_facebook(
+            logger.info(
+                "Publishing on Facebook: post_type=%s media_type=%s", post_type, media_type
+            )
+            try:
+                fb_text = await _publish_facebook(
                     session,
                     page_id,
                     post_type,
@@ -569,7 +632,14 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
                     publish_now=publish_now,
                     access_token=graph_token,
                 )
-            )
+                results.append(fb_text)
+                payload["_publish_platform_results"]["facebook"] = {"outcome": "success"}
+            except Exception as e:
+                payload["_publish_platform_results"]["facebook"] = {
+                    "outcome": "failed",
+                    "error": _platform_error_text(e),
+                }
+                raise
 
     if len(results) == 1:
         result_text = results[0]

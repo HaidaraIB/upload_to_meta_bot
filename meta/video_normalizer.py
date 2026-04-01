@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
 import shutil
 import subprocess
@@ -16,6 +17,8 @@ logger = logging.getLogger(__name__)
 # Instagram publishing works reliably with H.264 + AAC in MP4; other codecs often pass Facebook but fail IG processing.
 _IG_VIDEO_CODECS = frozenset({"h264", "avc", "avc1"})
 _IG_AUDIO_CODECS = frozenset({"aac"})
+# 8-bit 4:2:0 — what libx264 + yuv420p produces; IG often rejects 10-bit / 4:2:2 / 4:4:4 even if codec_name is h264.
+_IG_SAFE_PIX_FMT = frozenset({"yuv420p", "yuvj420p"})
 
 
 def _ffprobe_bin() -> str:
@@ -47,6 +50,45 @@ def ffprobe_available() -> bool:
         return False
 
 
+def _h264_stream_needs_reencode_for_ig(
+    *,
+    codec_name: str,
+    pix_fmt: str | None,
+    profile: str | None,
+) -> bool:
+    """H.264/AVC that still breaks IG processing (10-bit, chroma subsampling, High 10 profile)."""
+    c = (codec_name or "").lower().strip()
+    if c not in _IG_VIDEO_CODECS:
+        return True
+
+    pix = (pix_fmt or "").lower().strip()
+    prof = (profile or "").lower().strip()
+
+    if "10" in prof or "high 10" in prof or "high10" in prof:
+        logger.info(
+            "Instagram prep: H.264 profile %r is not IG-safe; re-encoding to 8-bit yuv420p.",
+            profile,
+        )
+        return True
+
+    if pix:
+        if pix in _IG_SAFE_PIX_FMT:
+            return False
+        if "10" in pix or "12" in pix or "422" in pix or "444" in pix:
+            logger.info(
+                "Instagram prep: pixel format %r often fails IG processing; re-encoding to yuv420p.",
+                pix_fmt,
+            )
+            return True
+        logger.info(
+            "Instagram prep: pixel format %r is not yuv420p; re-encoding for IG compatibility.",
+            pix_fmt,
+        )
+        return True
+
+    return False
+
+
 def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
     """
     True if video is not H.264 or an audio stream exists and is not AAC.
@@ -58,7 +100,7 @@ def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
     if not ffprobe:
         return None
     try:
-        v = subprocess.run(
+        vjson = subprocess.run(
             [
                 ffprobe,
                 "-v",
@@ -66,15 +108,15 @@ def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
                 "-select_streams",
                 "v:0",
                 "-show_entries",
-                "stream=codec_name",
+                "stream=codec_name,pix_fmt,profile",
                 "-of",
-                "default=noprint_wrappers=1:nokey=1",
+                "json",
                 str(path),
             ],
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=300,
         )
         a = subprocess.run(
             [
@@ -92,25 +134,38 @@ def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=300,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.debug("ffprobe failed: %s", exc)
         return None
 
-    if v.returncode != 0:
+    if vjson.returncode != 0 or not (vjson.stdout or "").strip():
         return None
 
-    vline = (v.stdout or "").strip().lower()
-    if not vline:
+    try:
+        parsed = json.loads(vjson.stdout)
+        streams = parsed.get("streams") or []
+        vstream = streams[0] if streams else {}
+    except (json.JSONDecodeError, IndexError, TypeError):
         return None
 
-    vcodec = vline.split("\n")[0].strip()
+    vcodec = (vstream.get("codec_name") or "").lower().strip()
+    if not vcodec:
+        return None
+
     if vcodec not in _IG_VIDEO_CODECS:
         logger.info(
             "Instagram prep: video codec %r is not H.264; will re-encode for compatibility.",
             vcodec,
         )
+        return True
+
+    if _h264_stream_needs_reencode_for_ig(
+        codec_name=vcodec,
+        pix_fmt=vstream.get("pix_fmt"),
+        profile=vstream.get("profile"),
+    ):
         return True
 
     if a.returncode != 0:
@@ -140,7 +195,8 @@ class VideoNormalizeResult:
 
 def ffmpeg_available() -> bool:
     ffmpeg_bin = getattr(Config, "FFMPEG_BIN", "ffmpeg")
-    if shutil.which(ffmpeg_bin) is None:
+    fb = Path(ffmpeg_bin)
+    if not fb.is_file() and shutil.which(ffmpeg_bin) is None:
         return False
     try:
         proc = subprocess.run(
@@ -158,8 +214,8 @@ def ffmpeg_available() -> bool:
 def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
     """
     Ensure MP4 bytes satisfy Instagram expectations:
-    - If IG_VIDEO_REENCODE_IF_INCOMPATIBLE: ffprobe; re-encode when video is not H.264
-      or an audio stream is present and not AAC (Facebook often accepts these; Instagram may not).
+    - If IG_VIDEO_REENCODE_IF_INCOMPATIBLE: ffprobe; re-encode when video is not H.264,
+      H.264 is 10-bit / non-yuv420p, or an audio stream exists and is not AAC.
     - If mdat appears before moov: remux with -c copy +faststart when codecs already match.
     - Re-encode with libx264/AAC + faststart when codecs mismatch or remux is insufficient.
     - IG_VIDEO_FORCE_REENCODE: always re-encode to the same IG-safe profile.

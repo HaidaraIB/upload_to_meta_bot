@@ -65,9 +65,36 @@ def test_build_publish_report_html_failed_includes_error():
         last_error="Something went wrong",
         report_at_utc=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     )
-    assert "Failed" in html
+    assert "Publish failed" in html
     assert "Reason" in html
     assert "Something went wrong" in html
+
+
+def test_build_publish_report_html_includes_platform_breakdown_when_present():
+    html = build_publish_report_html(
+        status="failed",
+        meta_post_id=1,
+        payload=_payload(
+            lang=models.Language.ARABIC,
+            post_type="feed",
+            platforms=["instagram", "facebook"],
+            _publish_platform_results={
+                "instagram": {"outcome": "failed", "error": "ig_api_error"},
+                "facebook": {
+                    "outcome": "not_attempted",
+                    "reason": "previous_platform_failed",
+                },
+            },
+        ),
+        meta_response=None,
+        last_error="combined",
+        report_at_utc=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+    )
+    assert "حالة كل منصة" in html
+    assert "انستغرام" in html
+    assert "فيسبوك" in html
+    assert "ig_api_error" in html
+    assert "فشلت منصة سابقة" in html
 
 
 def test_build_publish_report_lang_string_english():

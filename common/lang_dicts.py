@@ -259,6 +259,18 @@ TEXTS = {
         "publish_report_drive_archive_skipped_not_video": "تم التخطي (المنشور ليس فيديو)",
         "publish_report_drive_archive_not_attempted_meta_failed": "لم تتم المحاولة (فشل نشر Meta)",
         "publish_report_drive_archive_failed": "فشل الأرشفة ❌",
+        "publish_report_post_type": "نوع المنشور",
+        "publish_report_selected_platforms": "المنصات المختارة",
+        "publish_report_platform_breakdown": "حالة كل منصة",
+        "publish_report_platform_ok": "✅ نجح",
+        "publish_report_platform_failed": "❌ فشل",
+        "publish_report_platform_not_selected": "— غير مختارة",
+        "publish_report_platform_not_attempted_previous": (
+            "— لم تُجرَ المحاولة (فشلت منصة سابقة)"
+        ),
+        "publish_report_platform_not_attempted_pre": (
+            "— لم تُجرَ المحاولة (فشل قبل الوصول لنشر المنصات)"
+        ),
         "meta_upload_cancelled": "تم إلغاء العملية.",
         "toggle_permission": "تبديل الصلاحية",
         "all_permissions": "جميع الصلاحيات",
@@ -550,6 +562,18 @@ TEXTS = {
         "publish_report_drive_archive_skipped_not_video": "Skipped (not a video post)",
         "publish_report_drive_archive_not_attempted_meta_failed": "Not attempted (Meta publish failed)",
         "publish_report_drive_archive_failed": "Archive failed ❌",
+        "publish_report_post_type": "Post type",
+        "publish_report_selected_platforms": "Selected platforms",
+        "publish_report_platform_breakdown": "Per-platform status",
+        "publish_report_platform_ok": "✅ OK",
+        "publish_report_platform_failed": "❌ Failed",
+        "publish_report_platform_not_selected": "— not selected",
+        "publish_report_platform_not_attempted_previous": (
+            "— not attempted (a previous platform failed)"
+        ),
+        "publish_report_platform_not_attempted_pre": (
+            "— not attempted (failed before reaching platform publish)"
+        ),
         "meta_upload_cancelled": "Operation cancelled.",
         "toggle_permission": "Toggle Permission",
         "all_permissions": "All Permissions",

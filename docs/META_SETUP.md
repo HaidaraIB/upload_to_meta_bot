@@ -39,7 +39,7 @@
 - `FFMPEG_BIN=ffmpeg` — مسار/اسم تنفيذ `ffmpeg` المستخدم لتجهيز فيديو Instagram تلقائياً.
 - `IG_VIDEO_AUTOFIX_ENABLED=true` — تفعيل محاولة إصلاح MP4 غير المتوافق (faststart) قبل الرفع.
 - `IG_VIDEO_AUTOFIX_REENCODE_FALLBACK=true` — عند فشل `-c copy`، جرّب إعادة ترميز H.264/AAC مع faststart.
-- `IG_VIDEO_REENCODE_IF_INCOMPATIBLE=true` (افتراضي) — استخدام **ffprobe** بجانب `ffmpeg`: إذا كان الفيديو ليس **H.264** أو وُجد صوت وليس **AAC**، يُعاد الترميز تلقائياً إلى ملف مناسب لإنستغرام (غالباً ما ينجح فيسبوك بنفس الملف بينما يفشل إنستغرام بـ `ProcessingFailedError`).
+- `IG_VIDEO_REENCODE_IF_INCOMPATIBLE=true` (افتراضي) — استخدام **ffprobe** بجانب `ffmpeg`: إذا كان الفيديو ليس **H.264**، أو كان **H.264 لكن بصيغة بكسل غير yuv420p** (مثل **10-bit** `yuv420p10le` أو 4:2:2)، أو وُجد صوت وليس **AAC**، يُعاد الترميز تلقائياً إلى ملف مناسب لإنستغرام (غالباً ما ينجح فيسبوك بنفس الملف بينما يفشل إنستغرام بـ `ProcessingFailedError`).
 - `IG_VIDEO_FORCE_REENCODE=false` (افتراضي) — إن وُضع `true`، يُعاد ترميز **كل** فيديو إنستغرام إلى H.264/AAC + faststart (أبطأ وأثقل؛ للاستخدام عند استمرار الفشل رغم الخيارات أعلاه).
 
 ### فيديو إنستغرام (ريلز / ستوري / فيديو) وخطأ `ProcessingFailedError`

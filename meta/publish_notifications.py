@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from telegram.constants import ParseMode
 
 from Config import Config
-from common.lang_dicts import TEXTS
+from common.lang_dicts import BUTTONS, TEXTS
 import models
 
 logger = logging.getLogger(__name__)
@@ -103,6 +103,66 @@ def _clip_telegram_caption(html: str, max_len: int = 1024) -> str:
     return html[: max_len - 20] + "\n…(truncated)"
 
 
+def _post_type_label(lang: models.Language, post_type: str | None) -> str:
+    if not post_type:
+        return "—"
+    key = f"post_type_{post_type}"
+    if key in BUTTONS[lang]:
+        return BUTTONS[lang][key]
+    return str(post_type)
+
+
+def _selected_platforms_csv(lang: models.Language, platforms: list[Any] | None) -> str:
+    pls = set(platforms or [])
+    labels: list[str] = []
+    for p in ("instagram", "facebook"):
+        if p in pls:
+            labels.append(BUTTONS[lang][f"platform_{p}"])
+    return ", ".join(labels) if labels else "—"
+
+
+def _append_platform_breakdown_lines(
+    lines: list[str],
+    *,
+    payload: dict[str, Any],
+    lang: models.Language,
+    t: dict[str, str],
+) -> None:
+    raw = payload.get("_publish_platform_results")
+    if not raw or not isinstance(raw, dict):
+        return
+    lines.append(f"<b>{escape(t['publish_report_platform_breakdown'])}</b>")
+    for key in ("instagram", "facebook"):
+        if key not in raw:
+            continue
+        entry = raw[key]
+        if not isinstance(entry, dict):
+            continue
+        name = escape(BUTTONS[lang][f"platform_{key}"])
+        oc = entry.get("outcome")
+        if oc == "not_selected":
+            line = f"• {name}: {escape(t['publish_report_platform_not_selected'])}"
+        elif oc == "success":
+            line = f"• {name}: {escape(t['publish_report_platform_ok'])}"
+        elif oc == "failed":
+            err = _sanitize_text(str(entry.get("error") or ""), max_len=220)
+            line = (
+                f"• {name}: {escape(t['publish_report_platform_failed'])} — {escape(err)}"
+            )
+        elif oc == "not_attempted":
+            reason = entry.get("reason")
+            if reason == "previous_platform_failed":
+                detail = t["publish_report_platform_not_attempted_previous"]
+            else:
+                detail = t["publish_report_platform_not_attempted_pre"]
+            line = f"• {name}: {escape(detail)}"
+        elif oc == "pending":
+            line = f"• {name}: …"
+        else:
+            line = f"• {name}: {escape(str(oc))}"
+        lines.append(line)
+
+
 def _is_http_url(url: str) -> bool:
     try:
         p = urlparse(url)
@@ -148,7 +208,10 @@ def build_publish_report_html(
         offset_hours = settings.meta_timezone_offset_hours
         if admin_id is not None:
             row = s.get(models.User, int(admin_id))
-            admin_display = f"@{row.username}" if row.username else row.name
+            if row is not None:
+                admin_display = f"@{row.username}" if row.username else row.name
+            else:
+                admin_display = str(admin_id)
 
     report_local = when + timedelta(hours=offset_hours)
     dt_str = report_local.strftime("%Y-%m-%d %H:%M")
@@ -159,6 +222,16 @@ def build_publish_report_html(
         f"<b>{escape(t['publish_report_datetime'])}</b>: {escape(dt_str)}",
         f"<b>{escape(t['publish_report_admin'])}</b>: {escape(admin_display)}",
     ]
+
+    pt_label = _post_type_label(lang, payload.get("post_type"))
+    lines.append(
+        f"<b>{escape(t['publish_report_post_type'])}</b>: {escape(pt_label)}"
+    )
+    plat_csv = _selected_platforms_csv(lang, payload.get("platforms"))
+    lines.append(
+        f"<b>{escape(t['publish_report_selected_platforms'])}</b>: {escape(plat_csv)}"
+    )
+    _append_platform_breakdown_lines(lines, payload=payload, lang=lang, t=t)
 
     drive_archive_status = payload.get("_drive_archive_status")
     if drive_archive_status:
@@ -220,7 +293,6 @@ async def send_publish_report(
                     chat_id=chat_id,
                     photo=media_file_id,
                     caption=caption,
-                    parse_mode=ParseMode.HTML,
                 )
                 sent_with_media = True
             except Exception:
@@ -233,7 +305,6 @@ async def send_publish_report(
                     chat_id=chat_id,
                     video=media_file_id,
                     caption=caption,
-                    parse_mode=ParseMode.HTML,
                 )
                 sent_with_media = True
             except Exception:
@@ -248,7 +319,6 @@ async def send_publish_report(
                     chat_id=chat_id,
                     photo=image_url,
                     caption=caption,
-                    parse_mode=ParseMode.HTML,
                 )
                 sent_with_media = True
             except Exception:
@@ -261,7 +331,6 @@ async def send_publish_report(
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=html,
-                parse_mode=ParseMode.HTML,
             )
     except Exception:
         # Never break the main publishing flow due to notifications.
