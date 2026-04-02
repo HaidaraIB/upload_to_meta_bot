@@ -261,7 +261,7 @@ async def _upload_to_rupload(
 async def _ig_create_container(
     session: aiohttp.ClientSession,
     ig_user_id: str,
-    media_type: str,
+    media_type: str | None,
     caption: str | None,
     upload_type: str | None = None,
     image_url: str | None = None,
@@ -277,7 +277,9 @@ async def _ig_create_container(
         upload_type,
         bool(image_url),
     )
-    params: dict[str, Any] = {"media_type": media_type}
+    params: dict[str, Any] = {}
+    if media_type:
+        params["media_type"] = media_type
     if upload_type:
         params["upload_type"] = upload_type
     if caption:
@@ -728,9 +730,12 @@ async def _publish_instagram(
         raise MetaPublishUserError("meta_err_ig_missing_image_url")
 
     if post_type == "story":
-        ig_media_type = "STORIES"
+        ig_media_type: str | None = "STORIES"
     else:
-        ig_media_type = "IMAGE"
+        # Feed photo uses image_url without forcing media_type=IMAGE.
+        # Some Graph API responses reject IMAGE with:
+        # "Only photo or video can be accepted as media type."
+        ig_media_type = None
     logger.info(
         "Instagram photo branch: post_type=%s ig_media_type=%s",
         post_type,

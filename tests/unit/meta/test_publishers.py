@@ -273,7 +273,7 @@ async def test_publish_instagram_photo_requires_photo_media_type(mock_context):
 async def test_publish_instagram_feed_photo_uses_image_url(
     mock_context, publishers_texts, patch_meta_config
 ):
-    """post_type feed + photo uses IMAGE + image_url (not resumable video)."""
+    """post_type feed + photo uses image_url without forcing IG media_type."""
     url = "https://cdn.example.com/p.jpg"
     with patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph:
         graph.side_effect = [{"id": "ic1"}, {"id": "ip1"}]
@@ -292,7 +292,7 @@ async def test_publish_instagram_feed_photo_uses_image_url(
     assert graph.await_count == 2
     c0 = graph.await_args_list[0]
     assert c0.args[2] == "/17841400/media"
-    assert c0.kwargs["params"]["media_type"] == "IMAGE"
+    assert "media_type" not in c0.kwargs["params"]
     assert c0.kwargs["params"]["image_url"] == url
     c1 = graph.await_args_list[1]
     assert c1.args[2] == "/17841400/media_publish"
