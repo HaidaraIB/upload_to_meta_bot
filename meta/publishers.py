@@ -20,6 +20,41 @@ from meta.video_normalizer import normalize_instagram_video_bytes
 logger = logging.getLogger(__name__)
 
 
+def _normalize_platforms(platforms_raw: Any) -> list[str]:
+    if platforms_raw is None:
+        return []
+    if isinstance(platforms_raw, str):
+        return ["instagram", "facebook"] if platforms_raw == "both" else [platforms_raw]
+    if not isinstance(platforms_raw, (list, tuple, set)):
+        return [str(platforms_raw)]
+
+    out: list[str] = []
+    stack = list(platforms_raw)
+    while stack:
+        item = stack.pop(0)
+        if item is None:
+            continue
+        if isinstance(item, str):
+            if item == "both":
+                out.extend(["instagram", "facebook"])
+            else:
+                out.append(item)
+            continue
+        if isinstance(item, (list, tuple, set)):
+            stack = list(item) + stack
+            continue
+        out.append(str(item))
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for p in out:
+        k = p.strip().lower()
+        if k in ("instagram", "facebook") and k not in seen:
+            seen.add(k)
+            normalized.append(k)
+    return normalized
+
+
 def _platform_error_text(exc: BaseException, max_len: int = 280) -> str:
     s = str(exc)
     if len(s) > max_len:
@@ -29,7 +64,8 @@ def _platform_error_text(exc: BaseException, max_len: int = 280) -> str:
 
 def _init_publish_platform_results(payload: dict[str, Any]) -> None:
     """Track per-platform outcome for publish channel reports (instagram + facebook)."""
-    platforms = set(payload.get("platforms") or [])
+    platforms = set(_normalize_platforms(payload.get("platforms")))
+    payload["platforms"] = list(platforms)
     payload["_publish_platform_results"] = {}
     for key in ("instagram", "facebook"):
         if key in platforms:
@@ -365,7 +401,8 @@ async def _ig_upload_and_publish_video_resumable(
 
 
 def _validate_publish_payload_rules(payload: dict[str, Any]) -> None:
-    platforms: list[str] = payload.get("platforms") or []
+    platforms: list[str] = _normalize_platforms(payload.get("platforms"))
+    payload["platforms"] = platforms
     post_type = payload["post_type"]
     media_type = payload.get("media_type")
     caption = payload.get("caption") or ""
@@ -397,7 +434,8 @@ async def preflight_publish_payload(payload: dict[str, Any], context) -> None:
     """
     _validate_publish_payload_rules(payload)
 
-    platforms: list[str] = payload.get("platforms") or []
+    platforms: list[str] = _normalize_platforms(payload.get("platforms"))
+    payload["platforms"] = platforms
     page_id = str(payload["page_id"])
     post_type = payload["post_type"]
     media_type = payload.get("media_type")
@@ -478,7 +516,8 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
     """
     Returns an Arabic/English message text for the admin.
     """
-    platforms: list[str] = payload.get("platforms") or []
+    platforms: list[str] = _normalize_platforms(payload.get("platforms"))
+    payload["platforms"] = platforms
     page_id = str(payload["page_id"])
     post_type = payload["post_type"]  # reel|story|feed (feed post)
     caption = payload.get("caption") or ""

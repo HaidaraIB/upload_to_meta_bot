@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from telegram import InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
@@ -108,6 +109,45 @@ _PLATFORM_TO_BUTTON_KEY = {
 }
 
 
+def _normalize_platforms_input(platforms: Any) -> list[str]:
+    """Normalize platform selections to a flat, deduplicated list[str]."""
+    if platforms is None:
+        return []
+    if isinstance(platforms, str):
+        if platforms == "both":
+            return ["instagram", "facebook"]
+        return [platforms]
+
+    flat: list[str] = []
+    if isinstance(platforms, (list, tuple, set)):
+        stack = list(platforms)
+        while stack:
+            item = stack.pop(0)
+            if item is None:
+                continue
+            if isinstance(item, str):
+                if item == "both":
+                    flat.extend(["instagram", "facebook"])
+                else:
+                    flat.append(item)
+                continue
+            if isinstance(item, (list, tuple, set)):
+                stack = list(item) + stack
+                continue
+            flat.append(str(item))
+    else:
+        flat = [str(platforms)]
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in flat:
+        key = p.strip().lower()
+        if key in ("instagram", "facebook") and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
 def _format_preview_post_type(lang, post_type: str | None) -> str:
     if not post_type:
         return "—"
@@ -118,15 +158,14 @@ def _format_preview_post_type(lang, post_type: str | None) -> str:
 
 
 def _format_preview_platforms(lang, platforms: list[str] | str | None) -> str:
-    if not platforms:
+    normalized = _normalize_platforms_input(platforms)
+    if not normalized:
         return "—"
-    if isinstance(platforms, str):
-        platforms = ["instagram", "facebook"] if platforms == "both" else [platforms]
-    if set(platforms) == {"instagram", "facebook"}:
+    if set(normalized) == {"instagram", "facebook"}:
         return BUTTONS[lang]["platform_both"]
     sep = "، " if lang == models.Language.ARABIC else ", "
     parts: list[str] = []
-    for p in platforms:
+    for p in normalized:
         key = _PLATFORM_TO_BUTTON_KEY.get(p)
         parts.append(BUTTONS[lang][key] if key else p)
     return sep.join(parts)
@@ -456,10 +495,9 @@ async def choose_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         chosen = context.user_data["meta_upload"].get("platforms")
 
-    if chosen == "both":
-        platforms = ["instagram", "facebook"]
-    else:
-        platforms = [chosen]
+    platforms = _normalize_platforms_input(chosen)
+    if not platforms:
+        platforms = ["instagram", "facebook"] if chosen == "both" else [str(chosen)]
 
     context.user_data["meta_upload"]["platforms"] = platforms
 
@@ -744,7 +782,8 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Create DB record for tracking request lifecycle.
     meta_post_id = None
-    platforms = payload.get("platforms") or []
+    platforms = _normalize_platforms_input(payload.get("platforms"))
+    payload["platforms"] = platforms
     platforms_str = (
         ",".join(platforms) if isinstance(platforms, list) else str(platforms)
     )
@@ -790,7 +829,7 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if schedule_mode == "now":
-        pl_set = set(payload.get("platforms") or [])
+        pl_set = set(_normalize_platforms_input(payload.get("platforms")))
         if pl_set == {"instagram", "facebook"}:
             payload["publish_progress_edit"] = {
                 "chat_id": update.effective_chat.id,
