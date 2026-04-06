@@ -56,6 +56,19 @@ logger = logging.getLogger(__name__)
 ) = range(10)
 
 _VIDEO_DOC_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
+# Sent with "Send as file" / forwarded as document — still images for Meta upload.
+_IMAGE_DOC_SUFFIXES = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".heic",
+    ".heif",
+)
 
 
 def _video_document_file_id(msg) -> str | None:
@@ -70,6 +83,18 @@ def _video_document_file_id(msg) -> str | None:
     return d.file_id if any(name.endswith(s) for s in _VIDEO_DOC_SUFFIXES) else None
 
 
+def _image_document_file_id(msg) -> str | None:
+    """Telegram may send PNG/JPEG as a document (file) instead of msg.photo."""
+    d = getattr(msg, "document", None)
+    if not d:
+        return None
+    mt = (d.mime_type or "").lower()
+    if mt.startswith("image/"):
+        return d.file_id
+    name = (d.file_name or "").lower()
+    return d.file_id if any(name.endswith(s) for s in _IMAGE_DOC_SUFFIXES) else None
+
+
 class _VideoDocumentFilter(BaseFilter):
     def filter(self, update: Update):
         msg = update.effective_message
@@ -78,6 +103,15 @@ class _VideoDocumentFilter(BaseFilter):
 
 # Single instance for MessageHandler (video sent as compressed file / document).
 VIDEO_AS_DOCUMENT_FILTER = _VideoDocumentFilter()
+
+
+class _ImageDocumentFilter(BaseFilter):
+    def filter(self, update: Update):
+        msg = update.effective_message
+        return bool(msg and _image_document_file_id(msg))
+
+
+IMAGE_AS_DOCUMENT_FILTER = _ImageDocumentFilter()
 
 
 def _get_media_from_message(msg):
@@ -89,6 +123,9 @@ def _get_media_from_message(msg):
     vf = _video_document_file_id(msg)
     if vf:
         return "video", vf
+    img = _image_document_file_id(msg)
+    if img:
+        return "photo", img
     return None, None
 
 
@@ -1005,7 +1042,12 @@ meta_upload_handler = ConversationHandler(
         ],
         GET_MEDIA: [
             MessageHandler(
-                filters=(filters.PHOTO | filters.VIDEO | VIDEO_AS_DOCUMENT_FILTER)
+                filters=(
+                    filters.PHOTO
+                    | filters.VIDEO
+                    | VIDEO_AS_DOCUMENT_FILTER
+                    | IMAGE_AS_DOCUMENT_FILTER
+                )
                 & ~filters.COMMAND,
                 callback=get_media,
             ),
