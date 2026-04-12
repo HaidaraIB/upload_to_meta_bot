@@ -77,6 +77,11 @@ def test_graph_error_message_key_default_for_other_errors():
     assert graph_error_message_key("Invalid OAuth access token.") == "meta_err_graph"
 
 
+def test_graph_error_message_key_scheduled_publish_time_invalid():
+    msg = "(#100) The specified scheduled publish time is invalid."
+    assert graph_error_message_key(msg) == "meta_err_meta_schedule_time_invalid"
+
+
 @pytest.mark.asyncio
 async def test_list_business_assets_graph_error_raises(
     patch_meta_config, meta_graph_version

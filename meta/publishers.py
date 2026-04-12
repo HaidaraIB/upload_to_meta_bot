@@ -5,7 +5,7 @@ from typing import Any
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import aiohttp
 import models
 from telegram.error import TelegramError
@@ -18,6 +18,11 @@ from meta.supabase_storage import upload_bytes_public_url
 from meta.video_normalizer import normalize_instagram_video_bytes
 
 logger = logging.getLogger(__name__)
+
+# Facebook Page scheduling via Graph (feed/photos/videos + scheduled_publish_time):
+# Meta enforces a publish window relative to the API call (commonly ~10 minutes to ~30 days).
+_META_FB_SCHEDULE_MIN_LEAD = timedelta(minutes=10)
+_META_FB_SCHEDULE_MAX_LEAD = timedelta(days=30)
 
 
 def _normalize_platforms(platforms_raw: Any) -> list[str]:
@@ -427,12 +432,41 @@ def _validate_publish_payload_rules(payload: dict[str, Any]) -> None:
         raise MetaPublishUserError("meta_err_fb_text_requires_caption")
 
 
+def _validate_meta_native_schedule_window(payload: dict[str, Any]) -> None:
+    """
+    When the admin chose Meta-side scheduling, enforce Facebook's usual Graph window
+    so we fail fast with a clear error instead of (#100) invalid scheduled time.
+    """
+    if payload.get("schedule_mode") != "schedule":
+        return
+    if payload.get("schedule_backend") != "meta":
+        return
+    dt = payload.get("scheduled_utc_dt")
+    if not isinstance(dt, datetime):
+        return
+    dt = dt.astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    min_lead = _META_FB_SCHEDULE_MIN_LEAD
+    max_lead = _META_FB_SCHEDULE_MAX_LEAD
+    if dt < now + min_lead:
+        raise MetaPublishUserError(
+            "meta_err_meta_schedule_min_lead",
+            minutes=int(min_lead.total_seconds() // 60),
+        )
+    if dt > now + max_lead:
+        raise MetaPublishUserError(
+            "meta_err_meta_schedule_max_horizon",
+            days=max_lead.days,
+        )
+
+
 async def preflight_publish_payload(payload: dict[str, Any], context) -> None:
     """
     Validate payload before scheduling without creating/publishing any post.
     Raises MetaPublishUserError on predictable failures.
     """
     _validate_publish_payload_rules(payload)
+    _validate_meta_native_schedule_window(payload)
 
     platforms: list[str] = _normalize_platforms(payload.get("platforms"))
     payload["platforms"] = platforms

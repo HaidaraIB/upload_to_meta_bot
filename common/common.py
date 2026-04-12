@@ -4,7 +4,7 @@ from common.keyboards import build_request_buttons
 import os
 import models
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from custom_filters import HasPermission
 from models import Permission
 
@@ -34,8 +34,11 @@ def create_folders():
     os.makedirs("data", exist_ok=True)
 
 
-def format_datetime(d: datetime):
-    return
+def format_datetime(d: datetime) -> str:
+    if d.tzinfo is not None:
+        d_utc = d.astimezone(timezone.utc)
+        return d_utc.strftime("%Y-%m-%d %H:%M UTC")
+    return d.strftime("%Y-%m-%d %H:%M")
 
 
 def format_float(f: float):

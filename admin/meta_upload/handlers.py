@@ -18,6 +18,7 @@ from telegram.ext.filters import BaseFilter
 import models
 from Config import Config
 from common.back_to_home_page import back_to_admin_home_page_handler
+from common.common import format_datetime
 from common.keyboards import (
     build_admin_keyboard,
     build_back_button,
@@ -38,6 +39,8 @@ from admin.meta_upload.keyboards import (
     build_schedule_backend_keyboard,
     build_when_keyboard,
 )
+from meta.publishers import _META_FB_SCHEDULE_MAX_LEAD, _META_FB_SCHEDULE_MIN_LEAD
+from meta.scheduling_backends import meta_native_scheduling_supported
 
 logger = logging.getLogger(__name__)
 
@@ -376,35 +379,43 @@ async def get_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     lang = get_lang(update.effective_user.id)
 
-    media_type, file_id = _get_media_from_message(update.message)
-    if not media_type:
-        await update.message.reply_text(
-            text=TEXTS[lang]["meta_upload_invalid_media"],
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return GET_MEDIA
-
-    # Reels always require video.
-    post_type = context.user_data["meta_upload"].get("post_type")
-    if post_type == "reel" and media_type != "video":
-        await update.message.reply_text(
-            text=TEXTS[lang]["meta_err_reel_requires_video"],
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return GET_MEDIA
-
-    context.user_data["meta_upload"]["media_type"] = media_type
-    context.user_data["meta_upload"]["media_file_id"] = file_id
-    context.user_data["meta_upload"]["source_chat_id"] = update.effective_chat.id
-    context.user_data["meta_upload"]["source_message_id"] = update.message.message_id
-
     keyboard = build_caption_keyboard(lang)
     keyboard.append(build_back_button("back_to_get_media", lang=lang))
     keyboard.append(build_back_to_home_page_button(lang=lang, is_admin=True)[0])
-    await update.message.reply_text(
-        text=TEXTS[lang]["meta_upload_enter_caption_optional"],
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    
+    if update.message:
+        media_type, file_id = _get_media_from_message(update.message)
+        if not media_type:
+            await update.message.reply_text(
+                text=TEXTS[lang]["meta_upload_invalid_media"],
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return GET_MEDIA
+
+        # Reels always require video.
+        post_type = context.user_data["meta_upload"].get("post_type")
+        if post_type == "reel" and media_type != "video":
+            await update.message.reply_text(
+                text=TEXTS[lang]["meta_err_reel_requires_video"],
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return GET_MEDIA
+
+        context.user_data["meta_upload"]["media_type"] = media_type
+        context.user_data["meta_upload"]["media_file_id"] = file_id
+        context.user_data["meta_upload"]["source_chat_id"] = update.effective_chat.id
+        context.user_data["meta_upload"]["source_message_id"] = update.message.message_id
+
+        await update.message.reply_text(
+            text=TEXTS[lang]["meta_upload_enter_caption_optional"],
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    else:
+        await update.callback_query.edit_message_text(
+            text=TEXTS[lang]["meta_upload_enter_caption_optional"],
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
     return GET_CAPTION
 
 
@@ -770,6 +781,45 @@ async def choose_schedule_backend(update: Update, context: ContextTypes.DEFAULT_
         chosen = update.callback_query.data.replace("schedule_backend_", "")
         context.user_data["meta_upload"]["schedule_backend"] = chosen
 
+        if chosen == "meta":
+            mu = context.user_data["meta_upload"]
+            if not meta_native_scheduling_supported(
+                {"post_type": mu.get("post_type"), "platforms": mu.get("platforms")}
+            ):
+                context.user_data["meta_upload"].pop("schedule_backend", None)
+                msg = TEXTS[lang]["meta_upload_meta_schedule_feed_only"]
+                await update.callback_query.answer(
+                    text=msg,
+                    show_alert=True,
+                )
+                return CHOOSE_SCHEDULE_BACKEND
+            scheduled_utc_str = context.user_data["meta_upload"].get("scheduled_utc")
+            if scheduled_utc_str:
+                dt = datetime.fromisoformat(scheduled_utc_str).astimezone(timezone.utc)
+                now = datetime.now(timezone.utc)
+                if dt < now + _META_FB_SCHEDULE_MIN_LEAD:
+                    context.user_data["meta_upload"].pop("schedule_backend", None)
+                    msg = TEXTS[lang]["meta_err_meta_schedule_min_lead"].format(
+                        minutes=int(
+                            _META_FB_SCHEDULE_MIN_LEAD.total_seconds() // 60
+                        ),
+                    )
+                    await update.callback_query.answer(
+                        text=msg,
+                        show_alert=True,
+                    )
+                    return CHOOSE_SCHEDULE_BACKEND
+                if dt > now + _META_FB_SCHEDULE_MAX_LEAD:
+                    context.user_data["meta_upload"].pop("schedule_backend", None)
+                    msg = TEXTS[lang]["meta_err_meta_schedule_max_horizon"].format(
+                        days=_META_FB_SCHEDULE_MAX_LEAD.days,
+                    )
+                    await update.callback_query.answer(
+                        text=msg,
+                        show_alert=True,
+                    )
+                    return CHOOSE_SCHEDULE_BACKEND
+
     text = _build_preview_text(
         lang,
         {
@@ -985,6 +1035,8 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lang=lang,
                 meta_post_id=meta_post_id,
             )
+            if scheduled_success_text is None:
+                return ConversationHandler.END
         else:
             await schedule_with_bot_backend(
                 context,
@@ -997,7 +1049,7 @@ async def confirm_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             scheduled_success_text = TEXTS[lang][
                 "meta_upload_scheduled_success_backend"
             ].format(
-                time=context.user_data["meta_upload"].get("scheduled_utc"),
+                time=format_datetime(payload["scheduled_utc_dt"]),
                 backend=BUTTONS[lang]["schedule_backend_bot"],
             )
     except Exception as e:

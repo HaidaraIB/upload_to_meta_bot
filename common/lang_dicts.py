@@ -161,9 +161,8 @@ TEXTS = {
             "جارٍ تنفيذ الجدولة على: {backend}...\n"
             "الرجاء الانتظار 🔄"
         ),
-        "meta_upload_schedule_fallback_to_bot": (
-            "تعذر إكمال الجدولة عبر Meta.\n"
-            "تم التحويل تلقائياً إلى الجدولة على البوت وجارٍ المتابعة 🔄"
+        "meta_upload_meta_schedule_feed_only": (
+            "جدولة Meta هنا لمنشورات الفيد فقط — لريلز/ستوري استخدم جدولة البوت. ❌"
         ),
         "meta_upload_when_now_label": "الآن",
         "meta_upload_enter_datetime_future": "أرسل وقت الجدولة بصيغة: `YYYY-MM-DD HH:MM` (مثال: <code>2026-03-19 14:30</code>)",
@@ -218,6 +217,21 @@ TEXTS = {
         "meta_err_fb_unsupported_story_media": "نوع الوسائط غير مدعوم لستوري فيسبوك ❌",
         "meta_err_unsupported_post_type": "نوع المنشور غير مدعوم: {post_type} ❌",
         "meta_err_graph": "فشل طلب واجهة ميتا (HTTP {status}): {detail}",
+        "meta_err_meta_schedule_time_invalid": (
+            "وقت الجدولة على Meta غير صالح لهذا الطلب (HTTP {status}) ❌\n"
+            "لفيسبوك عادةً: يكون وقت النشر بين 10 دقائق و30 يوماً من لحظة إرسال الطلب إلى Graph، "
+            "مع published=false. إذا كان الموعد قريباً جداً أو بعيداً جداً أو إعداد UTC offset خاطئاً "
+            "سيظهر هذا الخطأ. يمكنك استخدام «جدولة على البوت» لتجنب قيود Meta.\n\n"
+            "نص ميتا: {detail}"
+        ),
+        "meta_err_meta_schedule_min_lead": (
+            "جدولة عبر Meta تتطلب أن يكون وقت النشر بعد {minutes} دقائق على الأقل من الآن "
+            "(حد شائع لفيسبوك/الصفحات). اختر موعداً لاحقاً أو استخدم «جدولة على البوت»."
+        ),
+        "meta_err_meta_schedule_max_horizon": (
+            "جدولة عبر Meta تقبل غالباً مواعيد ضمن نحو {days} يوماً من الآن. اختر موعداً أقرب "
+            "أو استخدم «جدولة على البوت»."
+        ),
         "meta_err_pages_manage_posts": (
             "صلاحية نشر الصفحات (pages_manage_posts) غير متاحة لهذا التطبيق (HTTP {status}).\n\n"
             "• إن كان التطبيق في وضع التطوير (Development): أضف حساب فيسبوك الذي يملك الصفحة كـ "
@@ -463,9 +477,8 @@ TEXTS = {
             "Scheduling on {backend} is in progress...\n"
             "Please wait 🔄"
         ),
-        "meta_upload_schedule_fallback_to_bot": (
-            "Could not complete scheduling via Meta.\n"
-            "Automatically switched to bot scheduling and continuing now 🔄"
+        "meta_upload_meta_schedule_feed_only": (
+            "Meta scheduling here is feed posts only — use On bot for reels/stories. ❌"
         ),
         "meta_upload_when_now_label": "Now",
         "meta_upload_enter_datetime_future": "Send scheduling time in format: `YYYY-MM-DD HH:MM` (example: <code>2026-03-19 14:30</code>)",
@@ -520,6 +533,22 @@ TEXTS = {
         "meta_err_fb_unsupported_story_media": "Unsupported media type for Facebook story ❌",
         "meta_err_unsupported_post_type": "Unsupported post type: {post_type} ❌",
         "meta_err_graph": "Meta API request failed (HTTP {status}): {detail}",
+        "meta_err_meta_schedule_time_invalid": (
+            "Meta rejected this scheduled publish time (HTTP {status}) ❌\n"
+            "For Facebook Pages, Graph usually requires the publish time to be between about "
+            "<b>10 minutes</b> and <b>30 days</b> from the moment the API request is sent (with "
+            "`published=false`). Wrong UTC offset in bot settings, a time too soon, or too far "
+            "ahead can trigger this. Use <b>On bot</b> scheduling to bypass Meta’s native window.\n\n"
+            "Meta message: {detail}"
+        ),
+        "meta_err_meta_schedule_min_lead": (
+            "Meta-side scheduling requires the publish time to be at least {minutes} minutes "
+            "from now (common Facebook Pages rule). Pick a later time or use On bot scheduling."
+        ),
+        "meta_err_meta_schedule_max_horizon": (
+            "Meta-side scheduling usually only accepts times within about {days} days from "
+            "now. Pick a sooner time or use On bot scheduling."
+        ),
         "meta_err_pages_manage_posts": (
             "The pages_manage_posts permission is not available for this app (HTTP {status}).\n\n"
             "• If the app is in Development: add the Facebook user who owns the Page as an "

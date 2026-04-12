@@ -41,6 +41,8 @@ def graph_error_message_key(detail: str) -> str:
             "Graph error classified as pages_manage_posts missing/invalid."
         )
         return "meta_err_pages_manage_posts"
+    if "scheduled publish time is invalid" in dl:
+        return "meta_err_meta_schedule_time_invalid"
     return "meta_err_graph"
 
 
