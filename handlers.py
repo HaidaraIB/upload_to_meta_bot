@@ -25,6 +25,7 @@ from models import init_db
 
 from MyApp import MyApp
 from TeleClientSingleton import TeleClientSingleton
+from jobs import register_firestore_polling_job
 
 
 def setup_and_run():
@@ -32,6 +33,7 @@ def setup_and_run():
     init_db()
 
     app = MyApp.build_app()
+    register_firestore_polling_job(app)
 
     app.add_handler(user_settings_handler)
     app.add_handler(change_lang_handler)

@@ -215,6 +215,7 @@ async def _download_via_telethon(
 
 async def _download_telegram_file(context, payload: dict[str, Any]) -> bytes:
     media_file_id = payload.get("media_file_id")
+    media_url = str(payload.get("media_url") or "").strip()
     max_bytes = _max_telegram_media_bytes()
     chat_id = payload.get("source_chat_id")
     message_id = payload.get("source_message_id")
@@ -241,10 +242,48 @@ async def _download_telegram_file(context, payload: dict[str, Any]) -> bytes:
                 e,
             )
 
+    if media_url:
+        if not media_url.lower().startswith(("https://", "http://")):
+            raise MetaPublishUserError(
+                "meta_err_telegram_download",
+                detail="invalid media_url scheme",
+            )
+        timeout = aiohttp.ClientTimeout(
+            total=getattr(Config, "META_HTTP_TIMEOUT_TOTAL", 600),
+            sock_read=getattr(Config, "META_HTTP_TIMEOUT_TOTAL", 600),
+        )
+        logger.debug("Downloading media bytes from URL: %s", media_url)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(media_url) as resp:
+                if resp.status >= 400:
+                    raise MetaPublishUserError(
+                        "meta_err_telegram_download",
+                        detail=f"media_url HTTP {resp.status}",
+                    )
+                content_len = resp.headers.get("Content-Length")
+                if content_len is not None:
+                    try:
+                        declared = int(content_len)
+                        if declared > max_bytes:
+                            raise MetaPublishUserError(
+                                "meta_err_telegram_media_too_large",
+                                max_mb=max_bytes // (1024 * 1024),
+                            )
+                    except ValueError:
+                        pass
+                data = await resp.read()
+                if len(data) > max_bytes:
+                    raise MetaPublishUserError(
+                        "meta_err_telegram_media_too_large",
+                        max_mb=max_bytes // (1024 * 1024),
+                    )
+                logger.debug("Downloaded media bytes from URL: bytes=%s", len(data))
+                return data
+
     if not media_file_id:
         raise MetaPublishUserError(
             "meta_err_telegram_download",
-            detail="missing media_file_id",
+            detail="missing media_file_id and media_url",
         )
 
     logger.debug("Downloading Telegram file via Bot API: file_id=%s", media_file_id)
@@ -727,6 +766,28 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
     if media_type == "video" and video_bytes is not None:
         payload["_post_publish_video_bytes"] = video_bytes
     return result_text
+
+
+async def publish_firestore_to_meta(payload: dict[str, Any]) -> str:
+    """
+    Firestore-worker entrypoint (non-Telegram).
+
+    It reuses the same Graph publish pipeline while normalizing payload keys so
+    Telegram-only side effects are skipped:
+    - no progress-message edits (drops publish_progress_edit)
+    - no Telegram media dependency (forces media_file_id=None, uses media_url)
+    - no Meta-native scheduling (forces scheduler_backend='bot')
+    """
+    p = dict(payload)
+    p.pop("publish_progress_edit", None)
+    p["media_file_id"] = None
+    p["scheduler_backend"] = "bot"
+    if p.get("schedule_mode") not in ("now", "schedule"):
+        p["schedule_mode"] = "schedule"
+    media_url = str(p.get("media_url") or "").strip()
+    if media_url and (p.get("media_type") == "photo") and not p.get("instagram_image_url"):
+        p["instagram_image_url"] = media_url
+    return await publish_to_meta(payload=p, context=None)
 
 
 async def _publish_instagram(

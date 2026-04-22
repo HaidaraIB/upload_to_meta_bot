@@ -90,3 +90,19 @@ class Config:
     SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET")
     SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
     SUPABASE_DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD")
+
+    # Optional Firestore poller (used as external scheduler worker for Point app).
+    _fs_poll_enabled_raw = os.getenv("FIRESTORE_POLLING_ENABLED", "false").lower()
+    FIRESTORE_POLLING_ENABLED = _fs_poll_enabled_raw in ("1", "true", "yes", "on")
+    FIRESTORE_PROJECT_ID = os.getenv("FIRESTORE_PROJECT_ID")
+    FIRESTORE_META_POSTS_COLLECTION = os.getenv("FIRESTORE_META_POSTS_COLLECTION", "meta_posts")
+    _fs_poll_interval_raw = os.getenv("FIRESTORE_POLL_INTERVAL_SECONDS", "60")
+    try:
+        FIRESTORE_POLL_INTERVAL_SECONDS = max(15, int(_fs_poll_interval_raw))
+    except ValueError:
+        FIRESTORE_POLL_INTERVAL_SECONDS = 60
+    _fs_poll_batch_raw = os.getenv("FIRESTORE_POLL_BATCH_SIZE", "20")
+    try:
+        FIRESTORE_POLL_BATCH_SIZE = max(1, min(200, int(_fs_poll_batch_raw)))
+    except ValueError:
+        FIRESTORE_POLL_BATCH_SIZE = 20
