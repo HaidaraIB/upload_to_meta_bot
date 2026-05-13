@@ -29,12 +29,14 @@ $igFix = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_AUTOFIX_ENABLED"
 $igRe = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_AUTOFIX_REENCODE_FALLBACK"
 $igInc = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_REENCODE_IF_INCOMPATIBLE"
 $igForce = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_FORCE_REENCODE"
+$igStrict = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_STRICT_PROBE"
 
 if (-not $ffmpegFromEnv) { $ffmpegFromEnv = "ffmpeg" }
 if (-not $igFix) { $igFix = "true (default if unset)" }
 if (-not $igRe) { $igRe = "true (default if unset)" }
 if (-not $igInc) { $igInc = "true (default if unset)" }
 if (-not $igForce) { $igForce = "false (default if unset)" }
+if (-not $igStrict) { $igStrict = "false (default if unset)" }
 
 Write-Host "=== Meta / Instagram video environment ===" -ForegroundColor Cyan
 Write-Host "Project root: $root"
@@ -44,6 +46,7 @@ Write-Host "IG_VIDEO_AUTOFIX_ENABLED (effective from .env): $igFix"
 Write-Host "IG_VIDEO_AUTOFIX_REENCODE_FALLBACK (effective from .env): $igRe"
 Write-Host "IG_VIDEO_REENCODE_IF_INCOMPATIBLE (effective from .env): $igInc"
 Write-Host "IG_VIDEO_FORCE_REENCODE (effective from .env): $igForce"
+Write-Host "IG_VIDEO_STRICT_PROBE (effective from .env): $igStrict"
 Write-Host ""
 
 $bin = $ffmpegFromEnv

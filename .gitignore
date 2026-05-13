@@ -11,3 +11,4 @@ google_drive/credentials/credentials.json
 google_drive/credentials/refresh_token.txt
 firebase-adminsdk.json
 firebase-adminsdk.test.json
+.vscode/

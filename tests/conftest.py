@@ -15,6 +15,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import Config as config_module
+
+
+@pytest.fixture(autouse=True)
+def _ig_video_strict_probe_off_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """IG_VIDEO_STRICT_PROBE in .env breaks synthetic video bytes used in publisher tests."""
+    monkeypatch.setattr(config_module.Config, "IG_VIDEO_STRICT_PROBE", False)
+
 
 @pytest.fixture
 def mock_context():

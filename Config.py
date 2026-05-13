@@ -84,6 +84,9 @@ class Config:
     _ig_force_reencode_raw = os.getenv("IG_VIDEO_FORCE_REENCODE", "false").lower()
     IG_VIDEO_FORCE_REENCODE = _ig_force_reencode_raw in ("1", "true", "yes", "on")
 
+    _ig_strict_probe_raw = os.getenv("IG_VIDEO_STRICT_PROBE", "false").lower()
+    IG_VIDEO_STRICT_PROBE = _ig_strict_probe_raw in ("1", "true", "yes", "on")
+
     # Supabase Storage (for auto-providing Instagram image_url)
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")

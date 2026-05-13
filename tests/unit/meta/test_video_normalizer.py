@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 
@@ -24,7 +25,15 @@ def _fast_mp4() -> bytes:
     return _box(b"ftyp", b"isom\x00\x00\x02\x00isom") + _box(b"moov") + _box(b"mdat", b"x")
 
 
-def test_faststart_input_not_changed():
+def test_faststart_input_not_changed(monkeypatch: pytest.MonkeyPatch):
+    # Synthetic bytes are not a real MP4; real ffprobe may return inconclusive (None).
+    # Isolate from .env (e.g. IG_VIDEO_STRICT_PROBE) and force a clean "compatible" probe.
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_STRICT_PROBE", False)
+    monkeypatch.setattr(
+        vn,
+        "_probe_streams_incompatible_with_instagram",
+        lambda _path: False,
+    )
     result = vn.normalize_instagram_video_bytes(_fast_mp4())
     assert result.changed is False
     assert result.method == "none"
@@ -104,3 +113,41 @@ def test_incompatible_codec_triggers_reencode(monkeypatch: pytest.MonkeyPatch):
     result = vn.normalize_instagram_video_bytes(_fast_mp4())
     assert result.changed is True
     assert result.method == "reencode_faststart"
+
+
+def test_warns_when_ffprobe_unavailable(caplog: pytest.LogCaptureFixture, monkeypatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
+    monkeypatch.setattr(vn, "ffprobe_available", lambda: False)
+    with caplog.at_level(logging.WARNING):
+        result = vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert result.method == "none"
+    assert "ffprobe unavailable" in caplog.text
+
+
+def test_strict_probe_raises_when_probe_inconclusive(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_STRICT_PROBE", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
+    monkeypatch.setattr(vn, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(
+        vn,
+        "_probe_streams_incompatible_with_instagram",
+        lambda _path: None,
+    )
+    with pytest.raises(MetaPublishUserError) as cm:
+        vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert cm.value.message_key == "meta_err_ig_video_probe_ambiguous"
+
+
+def test_probe_inconclusive_logs_without_strict(caplog, monkeypatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_STRICT_PROBE", False)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
+    monkeypatch.setattr(vn, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(
+        vn,
+        "_probe_streams_incompatible_with_instagram",
+        lambda _path: None,
+    )
+    with caplog.at_level(logging.WARNING):
+        result = vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert result.method == "none"
+    assert "ffprobe did not determine" in caplog.text

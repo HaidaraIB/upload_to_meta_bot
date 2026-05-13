@@ -260,6 +260,10 @@ TEXTS = {
             "تعذر تجهيز الفيديو تلقائيا ليتوافق مع متطلبات إنستغرام. "
             "يرجى إعادة تصديره بصيغة MP4 (H.264/AAC) مع faststart ثم المحاولة مجددا ❌"
         ),
+        "meta_err_ig_video_probe_ambiguous": (
+            "تعذر التحقق من ترميز الفيديو عبر ffprobe. ثبّت ffprobe بجانب ffmpeg على خادم النشر، "
+            "أو فعّل IG_VIDEO_FORCE_REENCODE=true، أو عطّل IG_VIDEO_STRICT_PROBE إن لم تكن بحاجة للفشل المبكر ❌"
+        ),
         "publish_report_head_published": "تم النشر",
         "publish_report_head_scheduled": "تم الجدولة",
         "publish_report_head_failed": "فشل النشر",
@@ -577,6 +581,10 @@ TEXTS = {
         "meta_err_ig_video_prepare_failed": (
             "Could not automatically prepare the video for Instagram requirements. "
             "Please re-export as MP4 (H.264/AAC) with faststart and try again ❌"
+        ),
+        "meta_err_ig_video_probe_ambiguous": (
+            "Could not verify video codecs with ffprobe. Install ffprobe next to ffmpeg on the publish host, "
+            "set IG_VIDEO_FORCE_REENCODE=true, or disable IG_VIDEO_STRICT_PROBE if early failure is not desired ❌"
         ),
         "publish_report_head_published": "Published",
         "publish_report_head_scheduled": "Scheduled",

@@ -186,6 +186,16 @@ def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
     return False
 
 
+def _warn_ig_codec_check_skipped(reason: str) -> None:
+    logger.warning(
+        "Instagram video prep: %s. "
+        "Codec compatibility was not verified; HEVC/H.265 and other non-H.264 MP4s "
+        "often reach Meta then fail with ProcessingFailedError. "
+        "Install ffprobe next to ffmpeg on the publish host, or set IG_VIDEO_FORCE_REENCODE=true.",
+        reason,
+    )
+
+
 @dataclass(frozen=True)
 class VideoNormalizeResult:
     video_bytes: bytes
@@ -226,6 +236,10 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
     want_probe = reencode_if_inc and ffprobe_available()
 
     if not force and not layout_bad and not want_probe:
+        if reencode_if_inc and not ffprobe_available():
+            _warn_ig_codec_check_skipped(
+                "ffprobe unavailable while IG_VIDEO_REENCODE_IF_INCOMPATIBLE is enabled"
+            )
         return VideoNormalizeResult(video_bytes=video_bytes, changed=False, method="none")
 
     with tempfile.TemporaryDirectory(prefix="ig-video-normalize-") as tmpdir:
@@ -236,13 +250,23 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
         in_path.write_bytes(video_bytes)
 
         incompatible = False
+        probe_result: bool | None = None
         if force:
             incompatible = True
         elif want_probe:
-            pr = _probe_streams_incompatible_with_instagram(in_path)
-            incompatible = pr is True
+            probe_result = _probe_streams_incompatible_with_instagram(in_path)
+            incompatible = probe_result is True
 
         if not force and not incompatible and not layout_bad:
+            if want_probe and probe_result is None:
+                logger.warning(
+                    "Instagram video prep: ffprobe did not determine stream compatibility "
+                    "(probe failed or unreadable file). Meta may reject the upload "
+                    "(ProcessingFailedError). Fix ffprobe, set IG_VIDEO_FORCE_REENCODE=true, "
+                    "or enable IG_VIDEO_STRICT_PROBE=true to fail here instead of at Meta."
+                )
+                if getattr(Config, "IG_VIDEO_STRICT_PROBE", False):
+                    raise MetaPublishUserError("meta_err_ig_video_probe_ambiguous")
             return VideoNormalizeResult(video_bytes=video_bytes, changed=False, method="none")
 
         if not getattr(Config, "IG_VIDEO_AUTOFIX_ENABLED", True):

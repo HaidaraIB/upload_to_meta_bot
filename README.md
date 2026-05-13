@@ -59,19 +59,22 @@ upload_to_meta_bot/
     cd upload_to_meta_bot
     ```
 
-2.  **Create a virtual environment** (recommended):
-    ```sh
+2.  **Create a virtual environment** at **`.venv`** in the project root (required for tooling in this repo):
+    ```powershell
     python -m venv .venv
     .venv\Scripts\activate
     ```
+    Cursor/VS Code picks up `.venv` automatically via [`.vscode/settings.json`](.vscode/settings.json).
 
-3.  **Install dependencies:**
-    ```sh
-    pip install -r requirements.txt
+    On Linux or macOS, point the interpreter to `.venv/bin/python` (and pytest to `.venv/bin/pytest`) in your editor if you do not use the Windows paths checked into `.vscode/settings.json`.
+
+3.  **Install dependencies** (use the venv’s `pip`):
+    ```powershell
+    .venv\Scripts\pip.exe install -r requirements.txt
     ```
     For development and tests:
-    ```sh
-    pip install -r requirements-dev.txt
+    ```powershell
+    .venv\Scripts\pip.exe install -r requirements-dev.txt
     ```
 
 4.  **Create a `.env` file** in the project root. Minimum variables (see `Config.py` for the full list):
@@ -84,15 +87,15 @@ upload_to_meta_bot/
     | `DB_PATH` | Path to SQLite file (e.g. `data/database.sqlite3`) |
     | `META_ACCESS_TOKEN` | Long-lived user/page-capable token for Graph |
 
-    Common optional variables: `LOG_LEVEL`, `ERRORS_CHANNEL`, `PUBLISH_RESULTS_CHANNEL`, `META_GRAPH_VERSION`, `META_HTTP_TIMEOUT_TOTAL`, `TELEGRAM_MEDIA_MAX_MB`, `FFMPEG_BIN`, `IG_VIDEO_AUTOFIX_*`, `IG_VIDEO_REENCODE_IF_INCOMPATIBLE`, `IG_VIDEO_FORCE_REENCODE`, and Supabase keys for Instagram `image_url` workflows.
+    Common optional variables: `LOG_LEVEL`, `ERRORS_CHANNEL`, `PUBLISH_RESULTS_CHANNEL`, `META_GRAPH_VERSION`, `META_HTTP_TIMEOUT_TOTAL`, `TELEGRAM_MEDIA_MAX_MB`, `FFMPEG_BIN`, `IG_VIDEO_AUTOFIX_*`, `IG_VIDEO_REENCODE_IF_INCOMPATIBLE`, `IG_VIDEO_FORCE_REENCODE`, `IG_VIDEO_STRICT_PROBE`, and Supabase keys for Instagram `image_url` workflows.
 
 5.  **Meta and Instagram**: Follow **[docs/META_SETUP.md](docs/META_SETUP.md)** for app permissions, token setup, scheduling notes, and running tests (including optional live integration).
 
 6.  **Google Drive** (optional): Place OAuth client credentials under `google_drive/credentials/` and use the project’s refresh-token helper; see `google_drive/credentials/README.md`.
 
-7.  **Run the bot:**
-    ```sh
-    python main.py
+7.  **Run the bot** (always via `.venv`):
+    ```powershell
+    .venv\Scripts\python.exe main.py
     ```
 
 8.  **Production / daemon**: See **[docs/SYSTEMD_GUIDE.md](docs/SYSTEMD_GUIDE.md)** for systemd-oriented deployment notes.
