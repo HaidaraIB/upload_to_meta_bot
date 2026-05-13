@@ -77,7 +77,7 @@ upload_to_meta_bot/
     .venv\Scripts\pip.exe install -r requirements-dev.txt
     ```
 
-4.  **Create a `.env` file** in the project root. Minimum variables (see `Config.py` for the full list):
+4.  **Create a `.env` file** in the project root (start from [`.env.example`](.env.example), which lists all variables and how they interact). Minimum variables (see `Config.py` for the full list):
 
     | Variable | Purpose |
     |----------|---------|
