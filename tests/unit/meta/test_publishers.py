@@ -180,12 +180,16 @@ async def test_publish_instagram_video_resumable_paths(
                 side_effect=make_download(video),
             ),
         ):
-            graph.side_effect = [{"id": "cre1"}, {"id": "pub1"}]
+            graph.side_effect = [
+                {"id": "cre1"},
+                {"status_code": "FINISHED"},
+                {"id": "pub1"},
+            ]
             await publish_to_meta(
                 _ig_video_payload(post_type=post_type),
                 mock_context,
             )
-    assert graph.await_count == 2
+    assert graph.await_count == 3
     assert graph.await_args_list[0].kwargs["params"]["media_type"] == expected_ig_media_type
     assert graph.await_args_list[0].kwargs["params"]["upload_type"] == "resumable"
 
@@ -266,6 +270,31 @@ async def test_publish_instagram_photo_requires_photo_media_type(mock_context):
     assert cm.value.message_key == "meta_err_ig_requires_photo"
 
 
+# --- Instagram container readiness ---
+
+
+@pytest.mark.asyncio
+async def test_ig_wait_container_ready_polls_until_finished(patch_meta_config):
+    session = AsyncMock()
+    with patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph:
+        graph.side_effect = [
+            {"status_code": "IN_PROGRESS"},
+            {"status_code": "FINISHED"},
+        ]
+        await publishers_module._ig_wait_container_ready(session, "ic1")
+    assert graph.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_ig_wait_container_ready_raises_on_error(patch_meta_config):
+    session = AsyncMock()
+    with patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph:
+        graph.return_value = {"status_code": "ERROR", "status": "failed"}
+        with pytest.raises(MetaPublishUserError) as cm:
+            await publishers_module._ig_wait_container_ready(session, "ic1")
+        assert cm.value.message_key == "meta_err_ig_container"
+
+
 # --- Instagram photo (image_url + media_publish) ---
 
 
@@ -276,7 +305,11 @@ async def test_publish_instagram_feed_photo_uses_image_url(
     """post_type feed + photo uses image_url without forcing IG media_type."""
     url = "https://cdn.example.com/p.jpg"
     with patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph:
-        graph.side_effect = [{"id": "ic1"}, {"id": "ip1"}]
+        graph.side_effect = [
+            {"id": "ic1"},
+            {"status_code": "FINISHED"},
+            {"id": "ip1"},
+        ]
         await publish_to_meta(
             {
                 "platforms": ["instagram"],
@@ -289,14 +322,14 @@ async def test_publish_instagram_feed_photo_uses_image_url(
             },
             mock_context,
         )
-    assert graph.await_count == 2
+    assert graph.await_count == 3
     c0 = graph.await_args_list[0]
     assert c0.args[2] == "/17841400/media"
     assert "media_type" not in c0.kwargs["params"]
     assert c0.kwargs["params"]["image_url"] == url
-    c1 = graph.await_args_list[1]
-    assert c1.args[2] == "/17841400/media_publish"
-    assert c1.kwargs["params"]["creation_id"] == "ic1"
+    c2 = graph.await_args_list[2]
+    assert c2.args[2] == "/17841400/media_publish"
+    assert c2.kwargs["params"]["creation_id"] == "ic1"
 
 
 @pytest.mark.asyncio
@@ -306,7 +339,11 @@ async def test_publish_instagram_story_photo_hits_video_branch_first(
     """Story with photo goes through Instagram photo branch (STORIES + image_url)."""
     url = "https://x/y.jpg"
     with patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph:
-        graph.side_effect = [{"id": "cre1"}, {"success": True}]
+        graph.side_effect = [
+            {"id": "cre1"},
+            {"status_code": "FINISHED"},
+            {"success": True},
+        ]
         msg = await publish_to_meta(
             {
                 "platforms": ["instagram"],
@@ -321,14 +358,14 @@ async def test_publish_instagram_story_photo_hits_video_branch_first(
         )
 
     assert msg == "IG OK"
-    assert graph.await_count == 2
+    assert graph.await_count == 3
     c0 = graph.await_args_list[0]
     assert c0.args[2] == "/17841400/media"
     assert c0.kwargs["params"]["media_type"] == "STORIES"
     assert c0.kwargs["params"]["image_url"] == url
-    c1 = graph.await_args_list[1]
-    assert c1.args[2] == "/17841400/media_publish"
-    assert c1.kwargs["params"]["creation_id"] == "cre1"
+    c2 = graph.await_args_list[2]
+    assert c2.args[2] == "/17841400/media_publish"
+    assert c2.kwargs["params"]["creation_id"] == "cre1"
 
 
 @pytest.mark.asyncio
@@ -816,6 +853,7 @@ async def test_publish_dual_feed_video_both_platforms(
         with patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph:
             graph.side_effect = [
                 {"id": "ig_c"},
+                {"status_code": "FINISHED"},
                 {"id": "ig_p"},
                 {"id": "fb_v"},
             ]
@@ -836,9 +874,9 @@ async def test_publish_dual_feed_video_both_platforms(
                     },
                     mock_context,
                 )
-    assert graph.await_count == 3
+    assert graph.await_count == 4
     assert msg == "IG OK\n\nFB OK"
-    assert graph.await_args_list[2].args[2] == "/page99/videos"
+    assert graph.await_args_list[3].args[2] == "/page99/videos"
 
 
 @pytest.mark.asyncio
@@ -856,6 +894,7 @@ async def test_publish_dual_instagram_photo_and_facebook_photo(
     ):
         graph.side_effect = [
             {"id": "ig_m"},
+            {"status_code": "FINISHED"},
             {"id": "ig_pub"},
             {"id": "fb_ph"},
         ]
@@ -872,7 +911,7 @@ async def test_publish_dual_instagram_photo_and_facebook_photo(
             },
             mock_context,
         )
-    assert graph.await_count == 3
+    assert graph.await_count == 4
     assert "IG OK" in msg and "FB OK" in msg
 
 
@@ -896,6 +935,7 @@ async def test_publish_dual_both_reels_ig_rupload_and_fb_upload(
         ):
             graph.side_effect = [
                 {"id": "igc"},
+                {"status_code": "FINISHED"},
                 {"id": "igp"},
                 fb_start,
                 {"done": True},
@@ -912,5 +952,5 @@ async def test_publish_dual_both_reels_ig_rupload_and_fb_upload(
                 },
                 mock_context,
             )
-    assert graph.await_count == 4
+    assert graph.await_count == 5
     fb_up.assert_awaited_once()

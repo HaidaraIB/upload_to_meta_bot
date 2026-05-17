@@ -106,9 +106,6 @@ def _build_publish_payload_from_firestore(
         "page_name": data.get("pageName") or data.get("page_name"),
         "instagram_user_name": data.get("instagramUserName") or data.get("instagram_user_name"),
     }
-    if media_url and media_type == "photo":
-        # Avoid unnecessary upload-to-supabase branch for IG photo.
-        payload["instagram_image_url"] = media_url
     return payload
 
 

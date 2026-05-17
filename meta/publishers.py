@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from typing import Any
+import asyncio
 import logging
 import time
 import uuid
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 # Meta enforces a publish window relative to the API call (commonly ~10 minutes to ~30 days).
 _META_FB_SCHEDULE_MIN_LEAD = timedelta(minutes=10)
 _META_FB_SCHEDULE_MAX_LEAD = timedelta(days=30)
+
+# Instagram container must reach FINISHED before media_publish (avoids error 9007).
+_IG_CONTAINER_POLL_INTERVAL_SEC = 2.0
+_IG_CONTAINER_POLL_MAX_WAIT_SEC = 120.0
 
 
 def _normalize_platforms(platforms_raw: Any) -> list[str]:
@@ -387,6 +392,38 @@ async def _ig_create_container(
     return str(creation_id)
 
 
+async def _ig_wait_container_ready(
+    session: aiohttp.ClientSession,
+    creation_id: str,
+    *,
+    access_token: str | None = None,
+) -> None:
+    """Poll until Meta marks the IG media container FINISHED (required before publish)."""
+    deadline = time.monotonic() + _IG_CONTAINER_POLL_MAX_WAIT_SEC
+    while time.monotonic() < deadline:
+        body = await _graph_request(
+            session,
+            "GET",
+            f"/{creation_id}",
+            params={"fields": "status_code,status"},
+            access_token=access_token,
+        )
+        code = str(body.get("status_code") or "").upper()
+        if code == "FINISHED":
+            logger.debug("IG container ready: creation_id=%s", creation_id)
+            return
+        if code in ("ERROR", "EXPIRED"):
+            raise MetaPublishUserError(
+                "meta_err_ig_container",
+                detail=graph_error_detail(body) or code,
+            )
+        await asyncio.sleep(_IG_CONTAINER_POLL_INTERVAL_SEC)
+    raise MetaPublishUserError(
+        "meta_err_ig_container",
+        detail="Instagram media container did not become ready in time",
+    )
+
+
 async def _ig_upload_and_publish_video_resumable(
     session: aiohttp.ClientSession,
     ig_user_id: str,
@@ -426,6 +463,10 @@ async def _ig_upload_and_publish_video_resumable(
             len(video_bytes),
         )
 
+    await _ig_wait_container_ready(
+        session, creation_id, access_token=access_token
+    )
+
     body = await _graph_request(
         session,
         "POST",
@@ -442,6 +483,30 @@ async def _ig_upload_and_publish_video_resumable(
         access_token=access_token,
     )
     return body
+
+
+def _need_instagram_photo_bytes(
+    payload: dict[str, Any], supabase_configured: bool
+) -> bool:
+    """
+    Download photo bytes and upload to the public Supabase bucket for Instagram.
+
+    Applies to Telegram file_id and to HTTP media_url (e.g. library / Firestore queue).
+    """
+    platforms = _normalize_platforms(payload.get("platforms"))
+    post_type = payload.get("post_type")
+    media_type = payload.get("media_type")
+    has_remote_media = bool(str(payload.get("media_url") or "").strip()) or bool(
+        payload.get("media_file_id")
+    )
+    return (
+        media_type == "photo"
+        and post_type in ("feed", "story")
+        and "instagram" in platforms
+        and not payload.get("instagram_image_url")
+        and has_remote_media
+        and supabase_configured
+    )
 
 
 def _validate_publish_payload_rules(payload: dict[str, Any]) -> None:
@@ -527,14 +592,7 @@ async def preflight_publish_payload(payload: dict[str, Any], context) -> None:
         ("instagram" in platforms and post_type in ("reel", "story", "feed"))
         or ("facebook" in platforms and post_type in ("reel", "story", "feed"))
     )
-    need_instagram_photo_bytes = (
-        media_type == "photo"
-        and post_type in ("feed", "story")
-        and "instagram" in platforms
-        and not payload.get("instagram_image_url")
-        and bool(media_file_id)
-        and supabase_configured
-    )
+    need_instagram_photo_bytes = _need_instagram_photo_bytes(payload, supabase_configured)
     need_photo_bytes = media_type == "photo" and (
         ("facebook" in platforms and post_type in ("feed", "story"))
         or need_instagram_photo_bytes
@@ -617,14 +675,7 @@ async def publish_to_meta(payload: dict[str, Any], context) -> str:
         ("instagram" in platforms and post_type in ("reel", "story", "feed"))
         or ("facebook" in platforms and post_type in ("reel", "story", "feed"))
     )
-    need_instagram_photo_bytes = (
-        media_type == "photo"
-        and post_type in ("feed", "story")
-        and "instagram" in platforms
-        and not payload.get("instagram_image_url")
-        and bool(media_file_id)
-        and supabase_configured
-    )
+    need_instagram_photo_bytes = _need_instagram_photo_bytes(payload, supabase_configured)
     need_photo_bytes = media_type == "photo" and (
         ("facebook" in platforms and post_type in ("feed", "story"))
         or need_instagram_photo_bytes
@@ -784,9 +835,8 @@ async def publish_firestore_to_meta(payload: dict[str, Any]) -> str:
     p["scheduler_backend"] = "bot"
     if p.get("schedule_mode") not in ("now", "schedule"):
         p["schedule_mode"] = "schedule"
-    media_url = str(p.get("media_url") or "").strip()
-    if media_url and (p.get("media_type") == "photo") and not p.get("instagram_image_url"):
-        p["instagram_image_url"] = media_url
+    # Do not set instagram_image_url from media_url — library/R2 URLs may be
+    # slow or non-fetchable by Meta; download bytes and use public Supabase instead.
     return await publish_to_meta(payload=p, context=None)
 
 
@@ -886,6 +936,7 @@ async def _publish_instagram(
         publish_now=publish_now,
         access_token=access_token,
     )
+    await _ig_wait_container_ready(session, creation_id, access_token=access_token)
     await _graph_request(
         session,
         "POST",
