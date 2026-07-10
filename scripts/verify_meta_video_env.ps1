@@ -30,6 +30,9 @@ $igRe = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_AUTOFIX_REENCODE_FALLBACK"
 $igInc = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_REENCODE_IF_INCOMPATIBLE"
 $igForce = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_FORCE_REENCODE"
 $igStrict = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_STRICT_PROBE"
+$igCrf = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_CRF"
+$igPreset = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_ENCODE_PRESET"
+$igAudioBr = Get-DotenvValue -Path $envFile -Key "IG_VIDEO_AUDIO_BITRATE"
 
 if (-not $ffmpegFromEnv) { $ffmpegFromEnv = "ffmpeg" }
 if (-not $igFix) { $igFix = "true (default if unset)" }
@@ -37,6 +40,9 @@ if (-not $igRe) { $igRe = "true (default if unset)" }
 if (-not $igInc) { $igInc = "true (default if unset)" }
 if (-not $igForce) { $igForce = "false (default if unset)" }
 if (-not $igStrict) { $igStrict = "false (default if unset)" }
+if (-not $igCrf) { $igCrf = "18 (default if unset)" }
+if (-not $igPreset) { $igPreset = "medium (default if unset)" }
+if (-not $igAudioBr) { $igAudioBr = "192k (default if unset)" }
 
 Write-Host "=== Meta / Instagram video environment ===" -ForegroundColor Cyan
 Write-Host "Project root: $root"
@@ -47,6 +53,9 @@ Write-Host "IG_VIDEO_AUTOFIX_REENCODE_FALLBACK (effective from .env): $igRe"
 Write-Host "IG_VIDEO_REENCODE_IF_INCOMPATIBLE (effective from .env): $igInc"
 Write-Host "IG_VIDEO_FORCE_REENCODE (effective from .env): $igForce"
 Write-Host "IG_VIDEO_STRICT_PROBE (effective from .env): $igStrict"
+Write-Host "IG_VIDEO_CRF (effective from .env): $igCrf"
+Write-Host "IG_VIDEO_ENCODE_PRESET (effective from .env): $igPreset"
+Write-Host "IG_VIDEO_AUDIO_BITRATE (effective from .env): $igAudioBr"
 Write-Host ""
 
 $bin = $ffmpegFromEnv

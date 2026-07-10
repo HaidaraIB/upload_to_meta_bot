@@ -87,6 +87,18 @@ class Config:
     _ig_strict_probe_raw = os.getenv("IG_VIDEO_STRICT_PROBE", "false").lower()
     IG_VIDEO_STRICT_PROBE = _ig_strict_probe_raw in ("1", "true", "yes", "on")
 
+    # Instagram re-encode quality (only when transcoding is required for IG compatibility).
+    _ig_video_crf_raw = os.getenv("IG_VIDEO_CRF", "18")
+    try:
+        IG_VIDEO_CRF = max(0, min(51, int(_ig_video_crf_raw)))
+    except ValueError:
+        IG_VIDEO_CRF = 18
+
+    IG_VIDEO_ENCODE_PRESET = os.getenv("IG_VIDEO_ENCODE_PRESET", "medium").strip() or "medium"
+
+    _ig_audio_bitrate_raw = os.getenv("IG_VIDEO_AUDIO_BITRATE", "192k").strip()
+    IG_VIDEO_AUDIO_BITRATE = _ig_audio_bitrate_raw or "192k"
+
     # Supabase Storage (for auto-providing Instagram image_url)
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")

@@ -19,6 +19,8 @@ _IG_VIDEO_CODECS = frozenset({"h264", "avc", "avc1"})
 _IG_AUDIO_CODECS = frozenset({"aac"})
 # 8-bit 4:2:0 — what libx264 + yuv420p produces; IG often rejects 10-bit / 4:2:2 / 4:4:4 even if codec_name is h264.
 _IG_SAFE_PIX_FMT = frozenset({"yuv420p", "yuvj420p"})
+# Cap maxrate derived from source probe so high CRF does not exceed practical IG size limits.
+_MAX_VIDEO_BITRATE_BPS = 50_000_000
 
 
 def _ffprobe_bin() -> str:
@@ -89,14 +91,29 @@ def _h264_stream_needs_reencode_for_ig(
     return False
 
 
-def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
-    """
-    True if video is not H.264 or an audio stream exists and is not AAC.
-    False if compatible. None if probe failed (caller may treat as not incompatible).
-    """
+@dataclass(frozen=True)
+class StreamCompatibility:
+    """Per-stream IG compatibility from ffprobe."""
+
+    video_needs_reencode: bool
+    audio_needs_reencode: bool
+    has_audio: bool
+    source_video_bitrate: int | None = None
+
+
+def _resolve_ffprobe_exe() -> str | None:
     ffprobe_raw = _ffprobe_bin()
     pp = Path(ffprobe_raw)
     ffprobe = str(pp.resolve()) if pp.is_file() else shutil.which(ffprobe_raw)
+    return ffprobe
+
+
+def _probe_stream_compatibility(path: Path) -> StreamCompatibility | None:
+    """
+    Probe video and audio streams separately.
+    Returns None if the video stream could not be read.
+    """
+    ffprobe = _resolve_ffprobe_exe()
     if not ffprobe:
         return None
     try:
@@ -108,7 +125,7 @@ def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
                 "-select_streams",
                 "v:0",
                 "-show_entries",
-                "stream=codec_name,pix_fmt,profile",
+                "stream=codec_name,pix_fmt,profile,bit_rate",
                 "-of",
                 "json",
                 str(path),
@@ -118,7 +135,7 @@ def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
             check=False,
             timeout=300,
         )
-        a = subprocess.run(
+        ajson = subprocess.run(
             [
                 ffprobe,
                 "-v",
@@ -128,7 +145,7 @@ def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
                 "-show_entries",
                 "stream=codec_name",
                 "-of",
-                "default=noprint_wrappers=1:nokey=1",
+                "json",
                 str(path),
             ],
             capture_output=True,
@@ -154,35 +171,66 @@ def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
     if not vcodec:
         return None
 
+    video_needs = False
     if vcodec not in _IG_VIDEO_CODECS:
         logger.info(
             "Instagram prep: video codec %r is not H.264; will re-encode for compatibility.",
             vcodec,
         )
-        return True
-
-    if _h264_stream_needs_reencode_for_ig(
+        video_needs = True
+    elif _h264_stream_needs_reencode_for_ig(
         codec_name=vcodec,
         pix_fmt=vstream.get("pix_fmt"),
         profile=vstream.get("profile"),
     ):
+        video_needs = True
+
+    source_bitrate: int | None = None
+    br_raw = vstream.get("bit_rate")
+    if br_raw is not None:
+        try:
+            source_bitrate = int(br_raw)
+            if source_bitrate <= 0:
+                source_bitrate = None
+        except (TypeError, ValueError):
+            source_bitrate = None
+
+    has_audio = False
+    audio_needs = False
+    if ajson.returncode == 0 and (ajson.stdout or "").strip():
+        try:
+            aparsed = json.loads(ajson.stdout)
+            astreams = aparsed.get("streams") or []
+            if astreams:
+                has_audio = True
+                acodec = (astreams[0].get("codec_name") or "").lower().strip()
+                if acodec and acodec not in _IG_AUDIO_CODECS:
+                    logger.info(
+                        "Instagram prep: audio codec %r is not AAC; will re-encode for compatibility.",
+                        acodec,
+                    )
+                    audio_needs = True
+        except (json.JSONDecodeError, IndexError, TypeError):
+            pass
+
+    return StreamCompatibility(
+        video_needs_reencode=video_needs,
+        audio_needs_reencode=audio_needs,
+        has_audio=has_audio,
+        source_video_bitrate=source_bitrate,
+    )
+
+
+def _probe_streams_incompatible_with_instagram(path: Path) -> bool | None:
+    """
+    True if video is not H.264 or an audio stream exists and is not AAC.
+    False if compatible. None if probe failed (caller may treat as not incompatible).
+    """
+    compat = _probe_stream_compatibility(path)
+    if compat is None:
+        return None
+    if compat.video_needs_reencode or compat.audio_needs_reencode:
         return True
-
-    if a.returncode != 0:
-        return False
-
-    aline = (a.stdout or "").strip().lower()
-    if not aline:
-        return False
-
-    acodec = aline.split("\n")[0].strip()
-    if acodec not in _IG_AUDIO_CODECS:
-        logger.info(
-            "Instagram prep: audio codec %r is not AAC; will re-encode for compatibility.",
-            acodec,
-        )
-        return True
-
     return False
 
 
@@ -221,6 +269,70 @@ def ffmpeg_available() -> bool:
         return False
 
 
+def _video_encode_args(source_video_bitrate: int | None) -> list[str]:
+    crf = getattr(Config, "IG_VIDEO_CRF", 18)
+    preset = getattr(Config, "IG_VIDEO_ENCODE_PRESET", "medium")
+    args = [
+        "-c:v",
+        "libx264",
+        "-crf",
+        str(crf),
+        "-preset",
+        preset,
+        "-pix_fmt",
+        "yuv420p",
+        "-profile:v",
+        "high",
+        "-level",
+        "4.1",
+    ]
+    if source_video_bitrate and source_video_bitrate > 0:
+        maxrate = min(int(source_video_bitrate * 1.2), _MAX_VIDEO_BITRATE_BPS)
+        bufsize = max(maxrate * 2, maxrate + 1)
+        args.extend(["-maxrate", str(maxrate), "-bufsize", str(bufsize)])
+    return args
+
+
+def _reencode_method_name(*, reencode_video: bool, reencode_audio: bool) -> str:
+    if reencode_video and reencode_audio:
+        return "reencode_faststart"
+    if reencode_video:
+        return "video_reencode_faststart"
+    if reencode_audio:
+        return "audio_reencode_faststart"
+    return "reencode_faststart"
+
+
+def _build_reencode_cmd(
+    ffmpeg_bin: str,
+    in_path: Path,
+    out_path: Path,
+    *,
+    reencode_video: bool,
+    reencode_audio: bool,
+    has_audio: bool,
+    source_video_bitrate: int | None,
+) -> list[str]:
+    audio_bitrate = getattr(Config, "IG_VIDEO_AUDIO_BITRATE", "192k")
+    cmd: list[str] = [ffmpeg_bin, "-y", "-i", str(in_path)]
+
+    if reencode_video:
+        cmd.extend(_video_encode_args(source_video_bitrate))
+    else:
+        cmd.extend(["-c:v", "copy"])
+
+    if has_audio:
+        if reencode_audio:
+            cmd.extend(["-c:a", "aac", "-b:a", str(audio_bitrate)])
+        else:
+            cmd.extend(["-c:a", "copy"])
+    else:
+        cmd.append("-an")
+
+    cmd.extend(["-movflags", "+faststart", str(out_path)])
+    return cmd
+
+
 def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
     """
     Ensure MP4 bytes satisfy Instagram expectations:
@@ -249,16 +361,36 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
 
         in_path.write_bytes(video_bytes)
 
-        incompatible = False
-        probe_result: bool | None = None
+        compat: StreamCompatibility | None = None
+        probe_inconclusive = False
         if force:
-            incompatible = True
+            video_needs = True
+            audio_needs = True
+            has_audio = True
+            source_bitrate = None
         elif want_probe:
-            probe_result = _probe_streams_incompatible_with_instagram(in_path)
-            incompatible = probe_result is True
+            compat = _probe_stream_compatibility(in_path)
+            if compat is None:
+                probe_inconclusive = True
+                video_needs = False
+                audio_needs = False
+                has_audio = False
+                source_bitrate = None
+            else:
+                video_needs = compat.video_needs_reencode
+                audio_needs = compat.audio_needs_reencode
+                has_audio = compat.has_audio
+                source_bitrate = compat.source_video_bitrate
+        else:
+            video_needs = False
+            audio_needs = False
+            has_audio = False
+            source_bitrate = None
+
+        incompatible = force or video_needs or audio_needs
 
         if not force and not incompatible and not layout_bad:
-            if want_probe and probe_result is None:
+            if want_probe and probe_inconclusive:
                 logger.warning(
                     "Instagram video prep: ffprobe did not determine stream compatibility "
                     "(probe failed or unreadable file). Meta may reject the upload "
@@ -278,7 +410,7 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
 
         ffmpeg_bin = getattr(Config, "FFMPEG_BIN", "ffmpeg")
 
-        try_copy = layout_bad and not incompatible and not force
+        try_copy = layout_bad and not video_needs and not audio_needs and not force
 
         if try_copy:
             copy_cmd = [
@@ -307,36 +439,29 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
                 )
                 raise MetaPublishUserError("meta_err_ig_video_prepare_failed")
 
-        reencode_cmd = [
+        reencode_video = force or video_needs
+        reencode_audio = force or audio_needs
+        method = _reencode_method_name(
+            reencode_video=reencode_video, reencode_audio=reencode_audio
+        )
+        reencode_cmd = _build_reencode_cmd(
             ffmpeg_bin,
-            "-y",
-            "-i",
-            str(in_path),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-pix_fmt",
-            "yuv420p",
-            "-profile:v",
-            "high",
-            "-level",
-            "4.1",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-movflags",
-            "+faststart",
-            str(out_reencode_path),
-        ]
+            in_path,
+            out_reencode_path,
+            reencode_video=reencode_video,
+            reencode_audio=reencode_audio,
+            has_audio=has_audio,
+            source_video_bitrate=source_bitrate,
+        )
         reencode_proc = _run_ffmpeg(reencode_cmd)
         if reencode_proc.returncode == 0 and out_reencode_path.exists():
             out_bytes = out_reencode_path.read_bytes()
             if _mp4_moov_before_mdat(out_bytes) is not False:
-                logger.info("Instagram video auto-fix succeeded via re-encode faststart.")
+                logger.info(
+                    "Instagram video auto-fix succeeded via %s.", method
+                )
                 return VideoNormalizeResult(
-                    video_bytes=out_bytes, changed=True, method="reencode_faststart"
+                    video_bytes=out_bytes, changed=True, method=method
                 )
 
         logger.warning("Instagram auto-fix failed (copy + re-encode).")
