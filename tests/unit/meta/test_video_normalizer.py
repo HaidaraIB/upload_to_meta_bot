@@ -83,6 +83,7 @@ def test_slow_mp4_fix_fails_returns_user_friendly_error(monkeypatch: pytest.Monk
     with pytest.raises(MetaPublishUserError) as cm:
         vn.normalize_instagram_video_bytes(_slow_mp4())
     assert cm.value.message_key == "meta_err_ig_video_prepare_failed"
+    assert cm.value.format_kwargs.get("detail") == "ffmpeg_unavailable"
 
 
 def test_h264_yuv420p10_needs_reencode():

@@ -257,7 +257,7 @@ TEXTS = {
             "أعد التصدير مثلاً: ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4 ❌"
         ),
         "meta_err_ig_video_prepare_failed": (
-            "تعذر تجهيز الفيديو تلقائيا ليتوافق مع متطلبات إنستغرام. "
+            "تعذر تجهيز الفيديو تلقائيا ليتوافق مع متطلبات إنستغرام ({detail}). "
             "يرجى إعادة تصديره بصيغة MP4 (H.264/AAC) مع faststart ثم المحاولة مجددا ❌"
         ),
         "meta_err_ig_video_probe_ambiguous": (
@@ -579,7 +579,7 @@ TEXTS = {
             "ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4 ❌"
         ),
         "meta_err_ig_video_prepare_failed": (
-            "Could not automatically prepare the video for Instagram requirements. "
+            "Could not automatically prepare the video for Instagram requirements ({detail}). "
             "Please re-export as MP4 (H.264/AAC) with faststart and try again ❌"
         ),
         "meta_err_ig_video_probe_ambiguous": (

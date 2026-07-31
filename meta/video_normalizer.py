@@ -402,15 +402,23 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
             return VideoNormalizeResult(video_bytes=video_bytes, changed=False, method="none")
 
         if not getattr(Config, "IG_VIDEO_AUTOFIX_ENABLED", True):
-            raise MetaPublishUserError("meta_err_ig_video_prepare_failed")
+            raise MetaPublishUserError(
+                "meta_err_ig_video_prepare_failed",
+                detail="autofix_disabled",
+            )
 
         if not ffmpeg_available():
             logger.warning("Instagram auto-fix skipped: ffmpeg unavailable.")
-            raise MetaPublishUserError("meta_err_ig_video_prepare_failed")
+            raise MetaPublishUserError(
+                "meta_err_ig_video_prepare_failed",
+                detail="ffmpeg_unavailable",
+            )
 
         ffmpeg_bin = getattr(Config, "FFMPEG_BIN", "ffmpeg")
 
         try_copy = layout_bad and not video_needs and not audio_needs and not force
+        copy_proc: subprocess.CompletedProcess[str] | None = None
+        reencode_proc: subprocess.CompletedProcess[str] | None = None
 
         if try_copy:
             copy_cmd = [
@@ -434,10 +442,15 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
                     )
 
             if not getattr(Config, "IG_VIDEO_AUTOFIX_REENCODE_FALLBACK", True):
+                snippet = _ffmpeg_stderr_snippet(copy_proc)
                 logger.warning(
-                    "Instagram auto-fix remux failed and re-encode fallback disabled."
+                    "Instagram auto-fix remux failed and re-encode fallback disabled. stderr=%s",
+                    snippet,
                 )
-                raise MetaPublishUserError("meta_err_ig_video_prepare_failed")
+                raise MetaPublishUserError(
+                    "meta_err_ig_video_prepare_failed",
+                    detail=_prepare_fail_detail("remux_failed_no_fallback", snippet),
+                )
 
         reencode_video = force or video_needs
         reencode_audio = force or audio_needs
@@ -464,8 +477,35 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
                     video_bytes=out_bytes, changed=True, method=method
                 )
 
-        logger.warning("Instagram auto-fix failed (copy + re-encode).")
-        raise MetaPublishUserError("meta_err_ig_video_prepare_failed")
+        snippet = _ffmpeg_stderr_snippet(reencode_proc or copy_proc)
+        logger.warning(
+            "Instagram auto-fix failed (copy + re-encode). stderr=%s",
+            snippet,
+        )
+        raise MetaPublishUserError(
+            "meta_err_ig_video_prepare_failed",
+            detail=_prepare_fail_detail("remux_and_reencode_failed", snippet),
+        )
+
+
+def _ffmpeg_stderr_snippet(
+    proc: subprocess.CompletedProcess[str] | None, max_len: int = 240
+) -> str:
+    if proc is None:
+        return ""
+    raw = (proc.stderr or proc.stdout or "").strip()
+    if not raw:
+        return f"exit={proc.returncode}"
+    # Avoid breaking str.format in localized TEXTS.
+    safe = raw.replace("{", "(").replace("}", ")").replace("\r", " ").replace("\n", " ")
+    return safe[:max_len]
+
+
+def _prepare_fail_detail(reason: str, snippet: str) -> str:
+    snippet = (snippet or "").strip()
+    if not snippet:
+        return reason
+    return f"{reason}: {snippet}"
 
 
 def _run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess[str]:
