@@ -266,3 +266,131 @@ def test_probe_inconclusive_logs_without_strict(caplog, monkeypatch):
         result = vn.normalize_instagram_video_bytes(_fast_mp4())
     assert result.method == "none"
     assert "ffprobe did not determine" in caplog.text
+
+
+def test_ffmpeg_stderr_snippet_uses_tail():
+    marker = "UNIQUE_ERR_TAIL_XYZ"
+    long_err = ("HEAD_ONLY_" * 40) + marker
+    proc = subprocess.CompletedProcess(
+        args=["ffmpeg"], returncode=1, stdout="", stderr=long_err
+    )
+    snippet = vn._ffmpeg_stderr_snippet(proc, max_len=240)
+    assert marker in snippet
+    assert len(snippet) <= 240
+    assert snippet == long_err[-240:]
+    assert not snippet.startswith("HEAD_ONLY_")
+
+
+def test_ffmpeg_stderr_snippet_strips_command_prefix_keeps_timeout():
+    raw = (
+        "Command '['/usr/bin/ffmpeg', '-y', '-i', '/tmp/in.mp4', '-c:v', 'libx264', "
+        "'-crf', '18', '-preset', 'medium', '-pix_fmt', 'yuv420p']' timed out after 300 seconds"
+    )
+    proc = subprocess.CompletedProcess(
+        args=["ffmpeg"], returncode=1, stdout="", stderr=raw
+    )
+    snippet = vn._ffmpeg_stderr_snippet(proc)
+    assert "Command [" not in snippet
+    assert "timed out" in snippet.lower()
+
+
+def test_run_ffmpeg_timeout_detail_has_ffmpeg_timeout(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_FFMPEG_TIMEOUT", 30)
+
+    def boom(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd=["/usr/bin/ffmpeg", "-y"], timeout=30)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    proc = vn._run_ffmpeg(["/usr/bin/ffmpeg", "-y", "-i", "in.mp4", "out.mp4"])
+    assert proc.returncode == 124
+    assert proc.stderr.startswith("ffmpeg_timeout_30s")
+    assert "Command [" not in proc.stderr
+
+
+def test_no_audio_muxes_silent_aac(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_ENABLED", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
+    monkeypatch.setattr(vn, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(
+        vn,
+        "_probe_stream_compatibility",
+        lambda _path: vn.StreamCompatibility(
+            video_needs_reencode=True,
+            audio_needs_reencode=False,
+            has_audio=False,
+        ),
+    )
+    monkeypatch.setattr(vn, "ffmpeg_available", lambda: True)
+
+    captured_cmds: list[list[str]] = []
+
+    def fake_run(cmd: list[str]):
+        captured_cmds.append(cmd)
+        Path(cmd[-1]).write_bytes(_fast_mp4())
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(vn, "_run_ffmpeg", fake_run)
+
+    result = vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert result.changed is True
+    cmd = captured_cmds[0]
+    assert "anullsrc=channel_layout=stereo:sample_rate=44100" in cmd
+    assert "-an" not in cmd
+    assert "aac" in cmd
+    assert "-shortest" in cmd
+
+
+def test_reencode_retries_with_veryfast_on_failure(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_ENABLED", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_CRF", 18)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_ENCODE_PRESET", "medium")
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_FORCE_REENCODE", True)
+    monkeypatch.setattr(vn, "ffmpeg_available", lambda: True)
+
+    captured_cmds: list[list[str]] = []
+
+    def fake_run(cmd: list[str]):
+        captured_cmds.append(list(cmd))
+        if len(captured_cmds) == 1:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=124,
+                stdout="",
+                stderr="ffmpeg_timeout_600s",
+            )
+        Path(cmd[-1]).write_bytes(_fast_mp4())
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(vn, "_run_ffmpeg", fake_run)
+
+    result = vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert result.changed is True
+    assert result.method.endswith("_fast_retry")
+    assert len(captured_cmds) == 2
+    assert captured_cmds[0][captured_cmds[0].index("-preset") + 1] == "medium"
+    assert captured_cmds[0][captured_cmds[0].index("-crf") + 1] == "18"
+    assert captured_cmds[1][captured_cmds[1].index("-preset") + 1] == "veryfast"
+    assert captured_cmds[1][captured_cmds[1].index("-crf") + 1] == "22"
+
+
+def test_prepare_failed_timeout_detail_not_command_dump(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_ENABLED", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_FORCE_REENCODE", True)
+    monkeypatch.setattr(vn, "ffmpeg_available", lambda: True)
+
+    def always_timeout(cmd: list[str]):
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=124,
+            stdout="",
+            stderr="ffmpeg_timeout_600s",
+        )
+
+    monkeypatch.setattr(vn, "_run_ffmpeg", always_timeout)
+
+    with pytest.raises(MetaPublishUserError) as cm:
+        vn.normalize_instagram_video_bytes(_fast_mp4())
+    detail = cm.value.format_kwargs.get("detail") or ""
+    assert cm.value.message_key == "meta_err_ig_video_prepare_failed"
+    assert "ffmpeg_timeout" in detail
+    assert "Command [" not in detail

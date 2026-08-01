@@ -269,16 +269,23 @@ def ffmpeg_available() -> bool:
         return False
 
 
-def _video_encode_args(source_video_bitrate: int | None) -> list[str]:
-    crf = getattr(Config, "IG_VIDEO_CRF", 18)
-    preset = getattr(Config, "IG_VIDEO_ENCODE_PRESET", "medium")
+def _video_encode_args(
+    source_video_bitrate: int | None,
+    *,
+    crf: int | None = None,
+    preset: str | None = None,
+) -> list[str]:
+    use_crf = getattr(Config, "IG_VIDEO_CRF", 18) if crf is None else crf
+    use_preset = (
+        getattr(Config, "IG_VIDEO_ENCODE_PRESET", "medium") if preset is None else preset
+    )
     args = [
         "-c:v",
         "libx264",
         "-crf",
-        str(crf),
+        str(use_crf),
         "-preset",
-        preset,
+        str(use_preset),
         "-pix_fmt",
         "yuv420p",
         "-profile:v",
@@ -312,24 +319,66 @@ def _build_reencode_cmd(
     reencode_audio: bool,
     has_audio: bool,
     source_video_bitrate: int | None,
+    crf: int | None = None,
+    preset: str | None = None,
 ) -> list[str]:
+    """
+    Build ffmpeg argv for IG-safe output.
+    When the source has no audio, mux silent AAC (anullsrc) instead of -an —
+    Instagram REELS often reject video-only MP4s with ProcessingFailedError.
+    """
     audio_bitrate = getattr(Config, "IG_VIDEO_AUDIO_BITRATE", "192k")
-    cmd: list[str] = [ffmpeg_bin, "-y", "-i", str(in_path)]
-
-    if reencode_video:
-        cmd.extend(_video_encode_args(source_video_bitrate))
-    else:
-        cmd.extend(["-c:v", "copy"])
 
     if has_audio:
+        cmd: list[str] = [ffmpeg_bin, "-y", "-i", str(in_path)]
+        if reencode_video:
+            cmd.extend(
+                _video_encode_args(
+                    source_video_bitrate, crf=crf, preset=preset
+                )
+            )
+        else:
+            cmd.extend(["-c:v", "copy"])
         if reencode_audio:
             cmd.extend(["-c:a", "aac", "-b:a", str(audio_bitrate)])
         else:
             cmd.extend(["-c:a", "copy"])
-    else:
-        cmd.append("-an")
+        cmd.extend(["-movflags", "+faststart", str(out_path)])
+        return cmd
 
-    cmd.extend(["-movflags", "+faststart", str(out_path)])
+    # No audio stream: generate silent AAC timed to the video via -shortest.
+    cmd = [
+        ffmpeg_bin,
+        "-y",
+        "-i",
+        str(in_path),
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=channel_layout=stereo:sample_rate=44100",
+    ]
+    if reencode_video:
+        cmd.extend(
+            _video_encode_args(source_video_bitrate, crf=crf, preset=preset)
+        )
+    else:
+        cmd.extend(["-c:v", "copy"])
+    cmd.extend(
+        [
+            "-c:a",
+            "aac",
+            "-b:a",
+            str(audio_bitrate),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(out_path),
+        ]
+    )
     return cmd
 
 
@@ -453,39 +502,102 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
                 )
 
         reencode_video = force or video_needs
-        reencode_audio = force or audio_needs
+        # When muxing silent AAC, treat as audio re-encode for method naming.
+        reencode_audio = force or audio_needs or not has_audio
         method = _reencode_method_name(
             reencode_video=reencode_video, reencode_audio=reencode_audio
         )
-        reencode_cmd = _build_reencode_cmd(
-            ffmpeg_bin,
-            in_path,
-            out_reencode_path,
-            reencode_video=reencode_video,
-            reencode_audio=reencode_audio,
-            has_audio=has_audio,
-            source_video_bitrate=source_bitrate,
-        )
-        reencode_proc = _run_ffmpeg(reencode_cmd)
-        if reencode_proc.returncode == 0 and out_reencode_path.exists():
-            out_bytes = out_reencode_path.read_bytes()
-            if _mp4_moov_before_mdat(out_bytes) is not False:
-                logger.info(
-                    "Instagram video auto-fix succeeded via %s.", method
-                )
-                return VideoNormalizeResult(
-                    video_bytes=out_bytes, changed=True, method=method
-                )
 
-        snippet = _ffmpeg_stderr_snippet(reencode_proc or copy_proc)
+        def _try_reencode(
+            out_path: Path,
+            *,
+            crf: int | None = None,
+            preset: str | None = None,
+        ) -> tuple[bytes | None, subprocess.CompletedProcess[str]]:
+            cmd = _build_reencode_cmd(
+                ffmpeg_bin,
+                in_path,
+                out_path,
+                reencode_video=reencode_video,
+                reencode_audio=force or audio_needs,
+                has_audio=has_audio,
+                source_video_bitrate=source_bitrate,
+                crf=crf,
+                preset=preset,
+            )
+            proc = _run_ffmpeg(cmd)
+            if proc.returncode == 0 and out_path.exists():
+                out_bytes = out_path.read_bytes()
+                if _mp4_moov_before_mdat(out_bytes) is not False:
+                    return out_bytes, proc
+            return None, proc
+
+        out_bytes, reencode_proc = _try_reencode(out_reencode_path)
+        if out_bytes is not None:
+            logger.info("Instagram video auto-fix succeeded via %s.", method)
+            return VideoNormalizeResult(
+                video_bytes=out_bytes, changed=True, method=method
+            )
+
+        # One faster retry after timeout/failure (common on small VPS).
+        base_crf = int(getattr(Config, "IG_VIDEO_CRF", 18))
+        fast_crf = min(51, base_crf + 4)
+        out_retry_path = Path(tmpdir) / "output-reencode-fast-retry.mp4"
         logger.warning(
-            "Instagram auto-fix failed (copy + re-encode). stderr=%s",
+            "Instagram auto-fix re-encode failed (snippet=%s); retrying with "
+            "preset=veryfast crf=%s.",
+            _ffmpeg_stderr_snippet(reencode_proc),
+            fast_crf,
+        )
+        out_bytes, retry_proc = _try_reencode(
+            out_retry_path, crf=fast_crf, preset="veryfast"
+        )
+        if out_bytes is not None:
+            fast_method = f"{method}_fast_retry"
+            logger.info(
+                "Instagram video auto-fix succeeded via %s.", fast_method
+            )
+            return VideoNormalizeResult(
+                video_bytes=out_bytes, changed=True, method=fast_method
+            )
+
+        snippet = _ffmpeg_stderr_snippet(retry_proc or reencode_proc or copy_proc)
+        logger.warning(
+            "Instagram auto-fix failed (copy + re-encode + fast retry). stderr=%s",
             snippet,
         )
         raise MetaPublishUserError(
             "meta_err_ig_video_prepare_failed",
             detail=_prepare_fail_detail("remux_and_reencode_failed", snippet),
         )
+
+
+def _sanitize_ffmpeg_detail_text(raw: str) -> str:
+    """Normalize ffmpeg/exception text for user-facing detail (no argv dumps)."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    # TimeoutExpired / CalledProcessError str() starts with Command '[...]'
+    if text.startswith("Command ") or text.startswith("Command["):
+        lower = text.lower()
+        if "timed out" in lower:
+            # Keep only the timeout message if present after the argv list.
+            idx = lower.rfind("timed out")
+            if idx >= 0:
+                text = text[idx:]
+            else:
+                text = "timed out"
+        elif "returned non-zero" in lower:
+            idx = lower.rfind("returned non-zero")
+            text = text[idx:] if idx >= 0 else "non-zero exit"
+        else:
+            text = "ffmpeg_command_failed"
+    return (
+        text.replace("{", "(")
+        .replace("}", ")")
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
 
 
 def _ffmpeg_stderr_snippet(
@@ -496,9 +608,19 @@ def _ffmpeg_stderr_snippet(
     raw = (proc.stderr or proc.stdout or "").strip()
     if not raw:
         return f"exit={proc.returncode}"
-    # Avoid breaking str.format in localized TEXTS.
-    safe = raw.replace("{", "(").replace("}", ")").replace("\r", " ").replace("\n", " ")
-    return safe[:max_len]
+
+    # Our timeout marker is already reason-first — keep from the start.
+    if raw.startswith("ffmpeg_timeout_") or raw.startswith("ffmpeg_exec_error:"):
+        safe = _sanitize_ffmpeg_detail_text(raw)
+        return safe[:max_len] if len(safe) > max_len else safe
+
+    safe = _sanitize_ffmpeg_detail_text(raw)
+    if not safe:
+        return f"exit={proc.returncode}"
+    # ffmpeg puts the actionable error at the end of stderr.
+    if len(safe) > max_len:
+        return safe[-max_len:]
+    return safe
 
 
 def _prepare_fail_detail(reason: str, snippet: str) -> str:
@@ -508,16 +630,48 @@ def _prepare_fail_detail(reason: str, snippet: str) -> str:
     return f"{reason}: {snippet}"
 
 
+def _ffmpeg_timeout_seconds() -> int:
+    try:
+        return max(30, int(getattr(Config, "IG_VIDEO_FFMPEG_TIMEOUT", 600)))
+    except (TypeError, ValueError):
+        return 600
+
+
 def _run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    logger.debug("Running ffmpeg command for Instagram auto-fix: %s", cmd[:4])
+    timeout = _ffmpeg_timeout_seconds()
+    logger.debug(
+        "Running ffmpeg command for Instagram auto-fix: %s (timeout=%ss)",
+        cmd[:4],
+        timeout,
+    )
     try:
         return subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             check=False,
-            timeout=300,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial = ""
+        if exc.stderr:
+            if isinstance(exc.stderr, bytes):
+                partial = exc.stderr.decode("utf-8", errors="replace")
+            else:
+                partial = str(exc.stderr)
+        partial = _sanitize_ffmpeg_detail_text(partial)
+        msg = f"ffmpeg_timeout_{timeout}s"
+        if partial:
+            # Prefer tail of partial stderr.
+            tail = partial[-200:] if len(partial) > 200 else partial
+            msg = f"{msg}; {tail}"
+        logger.warning("ffmpeg timed out after %ss for Instagram auto-fix.", timeout)
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=124, stdout="", stderr=msg
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("ffmpeg execution failure: %s", exc)
-        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr=str(exc))
+        msg = f"ffmpeg_exec_error: {type(exc).__name__}: {_sanitize_ffmpeg_detail_text(str(exc))}"
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=1, stdout="", stderr=msg
+        )

@@ -99,6 +99,13 @@ class Config:
     _ig_audio_bitrate_raw = os.getenv("IG_VIDEO_AUDIO_BITRATE", "192k").strip()
     IG_VIDEO_AUDIO_BITRATE = _ig_audio_bitrate_raw or "192k"
 
+    # Per ffmpeg invocation timeout (re-encode can be slow on small VPS).
+    _ig_ffmpeg_timeout_raw = os.getenv("IG_VIDEO_FFMPEG_TIMEOUT", "600")
+    try:
+        IG_VIDEO_FFMPEG_TIMEOUT = max(30, int(_ig_ffmpeg_timeout_raw))
+    except ValueError:
+        IG_VIDEO_FFMPEG_TIMEOUT = 600
+
     # Supabase Storage (for auto-providing Instagram image_url)
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
