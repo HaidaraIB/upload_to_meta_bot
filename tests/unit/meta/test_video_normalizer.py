@@ -394,3 +394,120 @@ def test_prepare_failed_timeout_detail_not_command_dump(monkeypatch: pytest.Monk
     assert cm.value.message_key == "meta_err_ig_video_prepare_failed"
     assert "ffmpeg_timeout" in detail
     assert "Command [" not in detail
+
+
+def test_needs_ig_dimension_downscale_thresholds():
+    assert vn._needs_ig_dimension_downscale(2160, 3840) is True
+    assert vn._needs_ig_dimension_downscale(3840, 2160) is True
+    assert vn._needs_ig_dimension_downscale(1080, 1920) is False
+    assert vn._needs_ig_dimension_downscale(1920, 1080) is False
+    assert vn._needs_ig_dimension_downscale(720, 1280) is False
+    assert vn._needs_ig_dimension_downscale(None, 1920) is False
+
+
+def test_ig_downscale_vf_orientation():
+    assert "1080:1920" in vn._ig_downscale_vf(2160, 3840)
+    assert "1920:1080" in vn._ig_downscale_vf(3840, 2160)
+
+
+def test_oversized_portrait_adds_downscale_vf(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_ENABLED", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
+    monkeypatch.setattr(vn, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(
+        vn,
+        "_probe_stream_compatibility",
+        lambda _path: vn.StreamCompatibility(
+            video_needs_reencode=True,
+            audio_needs_reencode=False,
+            has_audio=True,
+            width=2160,
+            height=3840,
+        ),
+    )
+    monkeypatch.setattr(vn, "ffmpeg_available", lambda: True)
+
+    captured_cmds: list[list[str]] = []
+
+    def fake_run(cmd: list[str]):
+        captured_cmds.append(cmd)
+        Path(cmd[-1]).write_bytes(_fast_mp4())
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(vn, "_run_ffmpeg", fake_run)
+
+    result = vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert result.changed is True
+    assert "downscale" in result.method
+    cmd = captured_cmds[0]
+    assert "-vf" in cmd
+    vf = cmd[cmd.index("-vf") + 1]
+    assert "1080:1920" in vf
+    assert "force_original_aspect_ratio=decrease" in vf
+
+
+def test_1080x1920_compatible_skips_downscale_vf(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_ENABLED", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
+    monkeypatch.setattr(vn, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(
+        vn,
+        "_probe_stream_compatibility",
+        lambda _path: vn.StreamCompatibility(
+            video_needs_reencode=True,
+            audio_needs_reencode=False,
+            has_audio=True,
+            width=1080,
+            height=1920,
+        ),
+    )
+    monkeypatch.setattr(vn, "ffmpeg_available", lambda: True)
+
+    captured_cmds: list[list[str]] = []
+
+    def fake_run(cmd: list[str]):
+        captured_cmds.append(cmd)
+        Path(cmd[-1]).write_bytes(_fast_mp4())
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(vn, "_run_ffmpeg", fake_run)
+
+    result = vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert result.changed is True
+    assert "downscale" not in result.method
+    cmd = captured_cmds[0]
+    assert "-vf" not in cmd
+
+
+def test_oversized_h264_only_still_downscales(monkeypatch: pytest.MonkeyPatch):
+    """Compatible H.264/AAC but 4K must still re-encode with scale."""
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_AUTOFIX_ENABLED", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
+    monkeypatch.setattr(vn.Config, "IG_VIDEO_FORCE_REENCODE", False)
+    monkeypatch.setattr(vn, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(
+        vn,
+        "_probe_stream_compatibility",
+        lambda _path: vn.StreamCompatibility(
+            video_needs_reencode=False,
+            audio_needs_reencode=False,
+            has_audio=True,
+            width=2160,
+            height=3840,
+        ),
+    )
+    monkeypatch.setattr(vn, "ffmpeg_available", lambda: True)
+
+    captured_cmds: list[list[str]] = []
+
+    def fake_run(cmd: list[str]):
+        captured_cmds.append(cmd)
+        Path(cmd[-1]).write_bytes(_fast_mp4())
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(vn, "_run_ffmpeg", fake_run)
+
+    result = vn.normalize_instagram_video_bytes(_fast_mp4())
+    assert result.changed is True
+    assert "downscale" in result.method
+    assert "-vf" in captured_cmds[0]

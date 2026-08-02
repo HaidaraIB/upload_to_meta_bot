@@ -99,6 +99,38 @@ class StreamCompatibility:
     audio_needs_reencode: bool
     has_audio: bool
     source_video_bitrate: int | None = None
+    width: int | None = None
+    height: int | None = None
+
+
+# Instagram-friendly max box: 1080 on the short side, 1920 on the long side.
+_IG_MAX_SHORT_SIDE = 1080
+_IG_MAX_LONG_SIDE = 1920
+
+
+def _needs_ig_dimension_downscale(width: int | None, height: int | None) -> bool:
+    """True when frame exceeds the 1080x1920 / 1920x1080 IG-safe box (level 4.1 friendly)."""
+    if width is None or height is None or width <= 0 or height <= 0:
+        return False
+    longer = max(width, height)
+    shorter = min(width, height)
+    return longer > _IG_MAX_LONG_SIDE or shorter > _IG_MAX_SHORT_SIDE
+
+
+def _ig_downscale_vf(width: int, height: int) -> str:
+    """
+    Scale down to fit 1080x1920 (portrait) or 1920x1080 (landscape), keeping AR.
+    No pad/letterbox — pixels are only reduced when over the limit.
+    """
+    if width >= height:
+        return (
+            f"scale={_IG_MAX_LONG_SIDE}:{_IG_MAX_SHORT_SIDE}:"
+            "force_original_aspect_ratio=decrease:force_divisible_by=2"
+        )
+    return (
+        f"scale={_IG_MAX_SHORT_SIDE}:{_IG_MAX_LONG_SIDE}:"
+        "force_original_aspect_ratio=decrease:force_divisible_by=2"
+    )
 
 
 def _resolve_ffprobe_exe() -> str | None:
@@ -125,7 +157,7 @@ def _probe_stream_compatibility(path: Path) -> StreamCompatibility | None:
                 "-select_streams",
                 "v:0",
                 "-show_entries",
-                "stream=codec_name,pix_fmt,profile,bit_rate",
+                "stream=codec_name,pix_fmt,profile,bit_rate,width,height",
                 "-of",
                 "json",
                 str(path),
@@ -195,6 +227,21 @@ def _probe_stream_compatibility(path: Path) -> StreamCompatibility | None:
         except (TypeError, ValueError):
             source_bitrate = None
 
+    width: int | None = None
+    height: int | None = None
+    try:
+        w_raw = vstream.get("width")
+        h_raw = vstream.get("height")
+        if w_raw is not None and h_raw is not None:
+            width = int(w_raw)
+            height = int(h_raw)
+            if width <= 0 or height <= 0:
+                width = None
+                height = None
+    except (TypeError, ValueError):
+        width = None
+        height = None
+
     has_audio = False
     audio_needs = False
     if ajson.returncode == 0 and (ajson.stdout or "").strip():
@@ -218,6 +265,8 @@ def _probe_stream_compatibility(path: Path) -> StreamCompatibility | None:
         audio_needs_reencode=audio_needs,
         has_audio=has_audio,
         source_video_bitrate=source_bitrate,
+        width=width,
+        height=height,
     )
 
 
@@ -321,16 +370,21 @@ def _build_reencode_cmd(
     source_video_bitrate: int | None,
     crf: int | None = None,
     preset: str | None = None,
+    scale_vf: str | None = None,
 ) -> list[str]:
     """
     Build ffmpeg argv for IG-safe output.
     When the source has no audio, mux silent AAC (anullsrc) instead of -an —
     Instagram REELS often reject video-only MP4s with ProcessingFailedError.
+    Optional scale_vf downscales oversized frames (must re-encode video).
     """
     audio_bitrate = getattr(Config, "IG_VIDEO_AUDIO_BITRATE", "192k")
+    if scale_vf:
+        reencode_video = True
 
-    if has_audio:
-        cmd: list[str] = [ffmpeg_bin, "-y", "-i", str(in_path)]
+    def _append_video_args(cmd: list[str]) -> None:
+        if scale_vf:
+            cmd.extend(["-vf", scale_vf])
         if reencode_video:
             cmd.extend(
                 _video_encode_args(
@@ -339,6 +393,10 @@ def _build_reencode_cmd(
             )
         else:
             cmd.extend(["-c:v", "copy"])
+
+    if has_audio:
+        cmd: list[str] = [ffmpeg_bin, "-y", "-i", str(in_path)]
+        _append_video_args(cmd)
         if reencode_audio:
             cmd.extend(["-c:a", "aac", "-b:a", str(audio_bitrate)])
         else:
@@ -357,12 +415,7 @@ def _build_reencode_cmd(
         "-i",
         "anullsrc=channel_layout=stereo:sample_rate=44100",
     ]
-    if reencode_video:
-        cmd.extend(
-            _video_encode_args(source_video_bitrate, crf=crf, preset=preset)
-        )
-    else:
-        cmd.extend(["-c:v", "copy"])
+    _append_video_args(cmd)
     cmd.extend(
         [
             "-c:a",
@@ -387,6 +440,7 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
     Ensure MP4 bytes satisfy Instagram expectations:
     - If IG_VIDEO_REENCODE_IF_INCOMPATIBLE: ffprobe; re-encode when video is not H.264,
       H.264 is 10-bit / non-yuv420p, or an audio stream exists and is not AAC.
+    - If frame exceeds 1080x1920 / 1920x1080: downscale on re-encode only (smaller sources untouched).
     - If mdat appears before moov: remux with -c copy +faststart when codecs already match.
     - Re-encode with libx264/AAC + faststart when codecs mismatch or remux is insufficient.
     - IG_VIDEO_FORCE_REENCODE: always re-encode to the same IG-safe profile.
@@ -395,8 +449,10 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
     force = getattr(Config, "IG_VIDEO_FORCE_REENCODE", False)
     reencode_if_inc = getattr(Config, "IG_VIDEO_REENCODE_IF_INCOMPATIBLE", True)
     want_probe = reencode_if_inc and ffprobe_available()
+    # Dimension checks need ffprobe even when codec re-encode is disabled.
+    can_probe = ffprobe_available()
 
-    if not force and not layout_bad and not want_probe:
+    if not force and not layout_bad and not want_probe and not can_probe:
         if reencode_if_inc and not ffprobe_available():
             _warn_ig_codec_check_skipped(
                 "ffprobe unavailable while IG_VIDEO_REENCODE_IF_INCOMPATIBLE is enabled"
@@ -412,29 +468,52 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
 
         compat: StreamCompatibility | None = None
         probe_inconclusive = False
+        width: int | None = None
+        height: int | None = None
+        scale_vf: str | None = None
+
         if force:
             video_needs = True
             audio_needs = True
             has_audio = True
             source_bitrate = None
-        elif want_probe:
+            if can_probe:
+                compat = _probe_stream_compatibility(in_path)
+                if compat is not None:
+                    width = compat.width
+                    height = compat.height
+                    has_audio = compat.has_audio
+                    source_bitrate = compat.source_video_bitrate
+        elif want_probe or can_probe:
             compat = _probe_stream_compatibility(in_path)
             if compat is None:
-                probe_inconclusive = True
+                probe_inconclusive = want_probe
                 video_needs = False
                 audio_needs = False
                 has_audio = False
                 source_bitrate = None
             else:
-                video_needs = compat.video_needs_reencode
-                audio_needs = compat.audio_needs_reencode
+                video_needs = bool(want_probe and compat.video_needs_reencode)
+                audio_needs = bool(want_probe and compat.audio_needs_reencode)
                 has_audio = compat.has_audio
                 source_bitrate = compat.source_video_bitrate
+                width = compat.width
+                height = compat.height
         else:
             video_needs = False
             audio_needs = False
             has_audio = False
             source_bitrate = None
+
+        if _needs_ig_dimension_downscale(width, height) and width and height:
+            scale_vf = _ig_downscale_vf(width, height)
+            video_needs = True
+            logger.info(
+                "Instagram prep: frame %sx%s exceeds IG-safe box; will downscale via %s.",
+                width,
+                height,
+                scale_vf,
+            )
 
         incompatible = force or video_needs or audio_needs
 
@@ -465,7 +544,14 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
 
         ffmpeg_bin = getattr(Config, "FFMPEG_BIN", "ffmpeg")
 
-        try_copy = layout_bad and not video_needs and not audio_needs and not force
+        # Remux-only is impossible when we must scale (filter requires re-encode).
+        try_copy = (
+            layout_bad
+            and not video_needs
+            and not audio_needs
+            and not force
+            and scale_vf is None
+        )
         copy_proc: subprocess.CompletedProcess[str] | None = None
         reencode_proc: subprocess.CompletedProcess[str] | None = None
 
@@ -501,12 +587,14 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
                     detail=_prepare_fail_detail("remux_failed_no_fallback", snippet),
                 )
 
-        reencode_video = force or video_needs
+        reencode_video = force or video_needs or scale_vf is not None
         # When muxing silent AAC, treat as audio re-encode for method naming.
         reencode_audio = force or audio_needs or not has_audio
         method = _reencode_method_name(
             reencode_video=reencode_video, reencode_audio=reencode_audio
         )
+        if scale_vf:
+            method = f"{method}_downscale"
 
         def _try_reencode(
             out_path: Path,
@@ -524,6 +612,7 @@ def normalize_instagram_video_bytes(video_bytes: bytes) -> VideoNormalizeResult:
                 source_video_bitrate=source_bitrate,
                 crf=crf,
                 preset=preset,
+                scale_vf=scale_vf,
             )
             proc = _run_ffmpeg(cmd)
             if proc.returncode == 0 and out_path.exists():
