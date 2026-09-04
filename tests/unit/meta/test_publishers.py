@@ -18,6 +18,20 @@ from meta.publishers import publish_to_meta
 # --- shared helpers ---
 
 
+def _box(kind: bytes, payload: bytes = b"") -> bytes:
+    return (len(payload) + 8).to_bytes(4, "big") + kind + payload
+
+
+def ig_video_bytes() -> bytes:
+    """
+    Minimal faststart MP4.
+
+    Instagram preflight rejects anything without an ftyp box, so IG video tests
+    need bytes that at least look like MP4 rather than an arbitrary placeholder.
+    """
+    return _box(b"ftyp", b"isom\x00\x00\x02\x00isom") + _box(b"moov") + _box(b"mdat", b"x")
+
+
 @contextmanager
 def mock_ig_rupload_http():
     with aioresponses() as m:
@@ -170,7 +184,7 @@ async def test_publish_instagram_video_resumable_paths(
     post_type,
     expected_ig_media_type,
 ):
-    video = b"v"
+    video = ig_video_bytes()
     with mock_ig_rupload_http():
         with (
             patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph,
@@ -198,7 +212,7 @@ async def test_publish_instagram_video_resumable_paths(
 async def test_publish_instagram_resumable_rupload_http_error(
     mock_context, publishers_texts, patch_meta_config
 ):
-    video = b"v"
+    video = ig_video_bytes()
     with aioresponses() as m:
         m.post(
             re.compile(r"https://rupload\.facebook\.com/ig-api-upload/.*"),
@@ -218,6 +232,130 @@ async def test_publish_instagram_resumable_rupload_http_error(
                 await publish_to_meta(_ig_video_payload(), mock_context)
             assert cm.value.message_key == "meta_err_ig_resumable_upload"
             assert cm.value.format_kwargs["status"] == 400
+
+
+_PROCESSING_FAILED_BODY = (
+    b'{"debug_info":{"retriable":false,"type":"ProcessingFailedError",'
+    b'"message":"Request processing failed"}}'
+)
+
+
+@contextmanager
+def patch_ig_video_prep():
+    """
+    Bypass ffmpeg during publisher tests while recording whether safe mode was used.
+    Yields the list of safe_mode flags, one per preparation.
+    """
+    from meta.video_normalizer import VideoNormalizeResult
+
+    calls: list[bool] = []
+
+    def _fake_prepare(video_bytes, _post_type, *, safe_mode=False):
+        calls.append(safe_mode)
+        return VideoNormalizeResult(
+            video_bytes=video_bytes,
+            changed=safe_mode,
+            method="safe_mode_test" if safe_mode else "none",
+        )
+
+    with patch.object(
+        publishers_module, "_prepare_instagram_video_bytes", side_effect=_fake_prepare
+    ):
+        yield calls
+
+
+@pytest.mark.asyncio
+async def test_ig_processing_failure_retries_once_in_safe_mode(
+    mock_context, publishers_texts, patch_meta_config
+):
+    """
+    Meta marks these retriable:false, which is true of that byte-stream. A safe-mode
+    re-encode is a materially different payload, so it gets one attempt on a new container.
+    """
+    with aioresponses() as m:
+        rupload = re.compile(r"https://rupload\.facebook\.com/ig-api-upload/.*")
+        m.post(rupload, status=400, body=_PROCESSING_FAILED_BODY)
+        m.post(rupload, status=200, body=b"{}")
+        with (
+            patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph,
+            patch.object(
+                publishers_module,
+                "_download_telegram_file",
+                side_effect=make_download(ig_video_bytes()),
+            ),
+            patch_ig_video_prep() as prep_calls,
+        ):
+            graph.side_effect = [
+                {"id": "cre1"},  # attempt 1 container
+                {"id": "cre2"},  # attempt 2 container (a creation_id is spent once)
+                {"status_code": "FINISHED"},
+                {"id": "pub1"},
+            ]
+            await publish_to_meta(_ig_video_payload(), mock_context)
+
+    assert prep_calls == [False, True], "second preparation must use safe mode"
+    assert graph.await_count == 4
+    created = [
+        c for c in graph.await_args_list if str(c.args[2]).endswith("/media")
+    ]
+    assert len(created) == 2, "retry must create a fresh container"
+
+
+@pytest.mark.asyncio
+async def test_ig_safe_mode_retry_can_be_disabled(
+    mock_context, publishers_texts, patch_meta_config
+):
+    with patch("Config.Config.IG_REELS_SAFE_MODE_RETRY", False):
+        with aioresponses() as m:
+            m.post(
+                re.compile(r"https://rupload\.facebook\.com/ig-api-upload/.*"),
+                status=400,
+                body=_PROCESSING_FAILED_BODY,
+            )
+            with (
+                patch.object(
+                    publishers_module, "_graph_request", new_callable=AsyncMock
+                ) as graph,
+                patch.object(
+                    publishers_module,
+                    "_download_telegram_file",
+                    side_effect=make_download(ig_video_bytes()),
+                ),
+                patch_ig_video_prep() as prep_calls,
+            ):
+                graph.side_effect = [{"id": "cre1"}]
+                with pytest.raises(MetaPublishUserError) as cm:
+                    await publish_to_meta(_ig_video_payload(), mock_context)
+                assert cm.value.message_key == "meta_err_ig_resumable_upload"
+
+    assert prep_calls == [False], "no safe-mode retry when disabled"
+
+
+@pytest.mark.asyncio
+async def test_ig_non_processing_400_is_not_retried(
+    mock_context, publishers_texts, patch_meta_config
+):
+    """An auth or parameter error repeats identically; retrying only wastes an upload."""
+    with aioresponses() as m:
+        m.post(
+            re.compile(r"https://rupload\.facebook\.com/ig-api-upload/.*"),
+            status=400,
+            body=b'{"debug_info":{"message":"Invalid parameter"}}',
+        )
+        with (
+            patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph,
+            patch.object(
+                publishers_module,
+                "_download_telegram_file",
+                side_effect=make_download(ig_video_bytes()),
+            ),
+            patch_ig_video_prep() as prep_calls,
+        ):
+            graph.side_effect = [{"id": "cre1"}]
+            with pytest.raises(MetaPublishUserError):
+                await publish_to_meta(_ig_video_payload(), mock_context)
+
+    assert prep_calls == [False]
 
 
 @pytest.mark.asyncio
@@ -848,7 +986,7 @@ async def test_publish_dual_feed_video_both_platforms(
     mock_context, publishers_texts, patch_meta_config
 ):
     """Same post_type/media_type: IG feed video (resumable) + FB /videos."""
-    video = b"v"
+    video = ig_video_bytes()
     with mock_ig_rupload_http():
         with patch.object(publishers_module, "_graph_request", new_callable=AsyncMock) as graph:
             graph.side_effect = [
@@ -919,7 +1057,7 @@ async def test_publish_dual_instagram_photo_and_facebook_photo(
 async def test_publish_dual_both_reels_ig_rupload_and_fb_upload(
     mock_context, publishers_texts, patch_meta_config
 ):
-    video = b"vv"
+    video = ig_video_bytes()
     fb_start = {"video_id": "fv", "upload_url": "https://rupload.facebook.com/vr/1"}
     with mock_ig_rupload_http():
         with (

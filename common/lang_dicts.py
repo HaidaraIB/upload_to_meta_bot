@@ -264,6 +264,18 @@ TEXTS = {
             "تعذر التحقق من ترميز الفيديو عبر ffprobe. ثبّت ffprobe بجانب ffmpeg على خادم النشر، "
             "أو فعّل IG_VIDEO_FORCE_REENCODE=true، أو عطّل IG_VIDEO_STRICT_PROBE إن لم تكن بحاجة للفشل المبكر ❌"
         ),
+        "meta_err_ig_video_too_short": (
+            "مدة الفيديو ({actual} ثانية) أقل من الحد الأدنى للريلز ({min_seconds} ثوانٍ). "
+            "أطل الفيديو ثم أعد المحاولة ❌"
+        ),
+        "meta_err_ig_video_too_long": (
+            "مدة الفيديو ({actual} دقيقة) تتجاوز الحد الأقصى للريلز ({max_minutes} دقيقة). "
+            "اقتطع الفيديو ثم أعد المحاولة ❌"
+        ),
+        "meta_err_ig_video_aspect_ratio": (
+            "نسبة أبعاد الفيديو ({width}x{height}) خارج النطاق الذي يقبله إنستغرام. "
+            "استخدم نسبة قريبة من 9:16 (مثال 1080x1920) ثم أعد المحاولة ❌"
+        ),
         "publish_report_head_published": "تم النشر",
         "publish_report_head_scheduled": "تم الجدولة",
         "publish_report_head_failed": "فشل النشر",
@@ -585,6 +597,18 @@ TEXTS = {
         "meta_err_ig_video_probe_ambiguous": (
             "Could not verify video codecs with ffprobe. Install ffprobe next to ffmpeg on the publish host, "
             "set IG_VIDEO_FORCE_REENCODE=true, or disable IG_VIDEO_STRICT_PROBE if early failure is not desired ❌"
+        ),
+        "meta_err_ig_video_too_short": (
+            "Video duration ({actual}s) is below the Reels minimum ({min_seconds}s). "
+            "Lengthen the video and try again ❌"
+        ),
+        "meta_err_ig_video_too_long": (
+            "Video duration ({actual} min) exceeds the Reels maximum ({max_minutes} min). "
+            "Trim the video and try again ❌"
+        ),
+        "meta_err_ig_video_aspect_ratio": (
+            "Video aspect ratio ({width}x{height}) is outside the range Instagram accepts. "
+            "Use a ratio close to 9:16 (e.g. 1080x1920) and try again ❌"
         ),
         "publish_report_head_published": "Published",
         "publish_report_head_scheduled": "Scheduled",

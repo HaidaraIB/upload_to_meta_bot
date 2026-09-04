@@ -183,6 +183,9 @@ def _is_due_for_publish(data: dict[str, Any], now_utc: datetime) -> bool:
     status = str(data.get("status") or "").strip().lower()
     if status in ("queued", "queued_now"):
         return True
+    # "failed" is terminal here on purpose: the user may have published the post
+    # manually after seeing the failure, so only an explicit re-queue from the app
+    # (which sets the status back to queued/scheduled) may publish it again.
     if status != "scheduled":
         return False
     scheduled = _get_fire_schedule_time(data)

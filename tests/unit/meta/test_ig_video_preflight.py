@@ -47,3 +47,18 @@ def test_reel_under_limit_slow_mp4_raises_faststart():
 def test_reel_faststart_order_passes():
     data = _box(b"ftyp", b"isom\x00\x00\x02\x00isom") + _box(b"moov") + _box(b"mdat", b"x")
     instagram_video_binary_preflight(data, "reel")
+
+
+def test_non_mp4_container_is_rejected():
+    """
+    Matroska/WebM with H.264 inside passes every codec check, then Meta answers with
+    an opaque ProcessingFailedError. Reject it here, where the reason is still legible.
+    """
+    mkv = b"\x1a\x45\xdf\xa3" + b"\x00" * 64
+    with pytest.raises(MetaPublishUserError) as cm:
+        instagram_video_binary_preflight(mkv, "reel")
+    assert cm.value.message_key == "meta_err_ig_mp4_requires_faststart"
+
+
+def test_non_video_post_type_skips_container_check():
+    instagram_video_binary_preflight(b"\x1a\x45\xdf\xa3" + b"\x00" * 64, "photo")

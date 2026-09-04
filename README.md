@@ -87,7 +87,9 @@ upload_to_meta_bot/
     | `DB_PATH` | Path to SQLite file (e.g. `data/database.sqlite3`) |
     | `META_ACCESS_TOKEN` | Long-lived user/page-capable token for Graph |
 
-    Common optional variables: `LOG_LEVEL`, `ERRORS_CHANNEL`, `PUBLISH_RESULTS_CHANNEL`, `META_GRAPH_VERSION`, `META_HTTP_TIMEOUT_TOTAL`, `TELEGRAM_MEDIA_MAX_MB`, `FFMPEG_BIN`, `IG_VIDEO_AUTOFIX_*`, `IG_VIDEO_REENCODE_IF_INCOMPATIBLE`, `IG_VIDEO_FORCE_REENCODE`, `IG_VIDEO_STRICT_PROBE`, `IG_VIDEO_CRF`, `IG_VIDEO_ENCODE_PRESET`, `IG_VIDEO_AUDIO_BITRATE`, and Supabase keys for Instagram `image_url` workflows.
+    Common optional variables: `LOG_LEVEL`, `ERRORS_CHANNEL`, `PUBLISH_RESULTS_CHANNEL`, `META_GRAPH_VERSION`, `META_HTTP_TIMEOUT_TOTAL`, `TELEGRAM_MEDIA_MAX_MB`, `FFMPEG_BIN`, `IG_VIDEO_AUTOFIX_*`, `IG_VIDEO_REENCODE_IF_INCOMPATIBLE`, `IG_VIDEO_FORCE_REENCODE`, `IG_VIDEO_STRICT_PROBE`, `IG_VIDEO_CRF`, `IG_VIDEO_ENCODE_PRESET`, `IG_VIDEO_AUDIO_BITRATE`, `IG_REELS_TARGET_FPS`, `IG_REELS_SAFE_MODE_*`, and Supabase keys for Instagram `image_url` workflows.
+
+    > **`ffprobe` is required on the publish host** (next to `ffmpeg`). Without it every Instagram codec, dimension and Reels-spec check silently no-ops and files reach Meta unverified — the most common cause of `ProcessingFailedError`. The bot logs `ffprobe_available=...` at startup. To diagnose a single file without publishing: `python -m scripts.ig_video_check <path-or-url>`.
 
 5.  **Meta and Instagram**: Follow **[docs/META_SETUP.md](docs/META_SETUP.md)** for app permissions, token setup, scheduling notes, and running tests (including optional live integration).
 

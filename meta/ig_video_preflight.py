@@ -70,6 +70,12 @@ def instagram_video_binary_preflight(video_bytes: bytes, post_type: str) -> None
             max_mb=max_b // (1024 * 1024),
         )
 
+    # Anything without an ftyp box is not MP4/MOV (Matroska, WebM, raw streams).
+    # Meta accepts only the MP4 family and answers everything else with an opaque
+    # ProcessingFailedError, so reject it here where the reason is still legible.
+    if len(video_bytes) < 12 or video_bytes[4:8] != b"ftyp":
+        raise MetaPublishUserError("meta_err_ig_mp4_requires_faststart")
+
     order = _mp4_moov_before_mdat(video_bytes)
     if order is False:
         raise MetaPublishUserError("meta_err_ig_mp4_requires_faststart")

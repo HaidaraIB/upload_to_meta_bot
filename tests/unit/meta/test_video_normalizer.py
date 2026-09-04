@@ -145,7 +145,8 @@ def test_incompatible_codec_triggers_reencode(monkeypatch: pytest.MonkeyPatch):
     assert "18" in cmd or str(vn.Config.IG_VIDEO_CRF) in cmd
     assert "yuv420p" in cmd
     assert "high" in cmd
-    assert "4.1" in cmd
+    # No pinned -level: 1080p60 exceeds level 4.1, so x264 must choose a conformant one.
+    assert "-level" not in cmd
     assert "+faststart" in cmd
 
 
@@ -334,7 +335,8 @@ def test_no_audio_muxes_silent_aac(monkeypatch: pytest.MonkeyPatch):
     result = vn.normalize_instagram_video_bytes(_fast_mp4())
     assert result.changed is True
     cmd = captured_cmds[0]
-    assert "anullsrc=channel_layout=stereo:sample_rate=44100" in cmd
+    # 48 kHz: Meta's Reels spec, and 44.1 kHz silent audio was itself an ingest risk.
+    assert "anullsrc=channel_layout=stereo:sample_rate=48000" in cmd
     assert "-an" not in cmd
     assert "aac" in cmd
     assert "-shortest" in cmd

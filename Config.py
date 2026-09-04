@@ -106,6 +106,30 @@ class Config:
     except ValueError:
         IG_VIDEO_FFMPEG_TIMEOUT = 600
 
+    # Frame rate forced onto reels whose source is VFR or outside Meta's 23-60 fps range.
+    _ig_reels_fps_raw = os.getenv("IG_REELS_TARGET_FPS", "30")
+    try:
+        IG_REELS_TARGET_FPS = max(23, min(60, int(_ig_reels_fps_raw)))
+    except ValueError:
+        IG_REELS_TARGET_FPS = 30
+
+    # Second upload attempt after Meta rejects the first payload with ProcessingFailedError.
+    _ig_safe_retry_raw = os.getenv("IG_REELS_SAFE_MODE_RETRY", "true").lower()
+    IG_REELS_SAFE_MODE_RETRY = _ig_safe_retry_raw in ("1", "true", "yes", "on")
+
+    _ig_safe_crf_raw = os.getenv("IG_REELS_SAFE_MODE_CRF", "23")
+    try:
+        IG_REELS_SAFE_MODE_CRF = max(0, min(51, int(_ig_safe_crf_raw)))
+    except ValueError:
+        IG_REELS_SAFE_MODE_CRF = 23
+
+    # Long-side cap used by the safe-mode retry encode (short side scales to keep AR).
+    _ig_safe_long_side_raw = os.getenv("IG_REELS_SAFE_MODE_LONG_SIDE", "1280")
+    try:
+        IG_REELS_SAFE_MODE_LONG_SIDE = max(480, min(1920, int(_ig_safe_long_side_raw)))
+    except ValueError:
+        IG_REELS_SAFE_MODE_LONG_SIDE = 1280
+
     # Supabase Storage (for auto-providing Instagram image_url)
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")

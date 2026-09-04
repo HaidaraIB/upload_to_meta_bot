@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -14,9 +15,14 @@ from Config import Config
 from common.lang_dicts import TEXTS
 from meta.errors import MetaPublishUserError, graph_error_detail
 from meta.graph_client import _graph_request
+from meta.ig_media_report import describe_video_bytes, summarize_report
 from meta.ig_video_preflight import instagram_video_binary_preflight
 from meta.supabase_storage import upload_bytes_public_url
-from meta.video_normalizer import normalize_instagram_video_bytes
+from meta.video_normalizer import (
+    VideoNormalizeResult,
+    ffprobe_available,
+    normalize_instagram_video_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,15 +107,113 @@ def _max_telegram_media_bytes() -> int:
     return int(getattr(Config, "TELEGRAM_MEDIA_MAX_BYTES", 200 * 1024 * 1024))
 
 
-def _prepare_instagram_video_bytes(video_bytes: bytes, post_type: str) -> bytes:
+def _prepare_instagram_video_bytes(
+    video_bytes: bytes, post_type: str, *, safe_mode: bool = False
+) -> VideoNormalizeResult:
     """
-    Normalize known MP4 layout issues for Instagram, then re-run strict preflight.
+    Normalize the video to Instagram's Reels spec, then re-run strict preflight.
+
+    Returns the full result (not just bytes) so a later upload failure can report
+    how the payload was prepared and which spec violations the source had.
     """
-    prepared = normalize_instagram_video_bytes(video_bytes)
+    prepared = normalize_instagram_video_bytes(video_bytes, safe_mode=safe_mode)
     if prepared.changed:
-        logger.info("Instagram video normalized before publish: method=%s", prepared.method)
+        logger.info(
+            "Instagram video normalized before publish: method=%s violations=%s",
+            prepared.method,
+            ",".join(prepared.violations) or "none",
+        )
     instagram_video_binary_preflight(prepared.video_bytes, post_type)
-    return prepared.video_bytes
+    return prepared
+
+
+def _is_ig_processing_failure(exc: BaseException) -> bool:
+    """
+    True for the rupload rejection that means Meta refused the bytes at ingest.
+
+    Meta marks these retriable:false, which is true of that exact byte-stream —
+    a materially different re-encode is still worth one attempt.
+    """
+    if not isinstance(exc, MetaPublishUserError):
+        return False
+    if exc.message_key != "meta_err_ig_resumable_upload":
+        return False
+    detail = str(exc.format_kwargs.get("detail") or "")
+    return "ProcessingFailedError" in detail or "processing failed" in detail.lower()
+
+
+async def _report_ig_upload_rejection(
+    *,
+    creation_id: str,
+    ig_user_id: str,
+    status: int,
+    body: str,
+    video_bytes: bytes,
+    prepared: VideoNormalizeResult | None,
+    attempt: int,
+) -> None:
+    """
+    Describe the exact payload Meta rejected.
+
+    Meta's answer names no property and no stream, so without a probe of the bytes
+    we actually sent, a rejection is undiagnosable. Never raises.
+    """
+    try:
+        report = describe_video_bytes(video_bytes)
+        summary = summarize_report(report)
+    except Exception:
+        logger.exception("Failed to probe rejected IG payload.")
+        report = {}
+        summary = "probe_failed"
+
+    method = prepared.method if prepared else "unknown"
+    violations = ",".join(prepared.violations) if prepared and prepared.violations else "none"
+
+    logger.error(
+        "IG rupload rejected: status=%s attempt=%s creation_id=%s ig_user_id=%s "
+        "prep_method=%s source_violations=%s ffprobe=%s payload=[%s] meta_body=%s\nfull_probe=%s",
+        status,
+        attempt,
+        creation_id,
+        ig_user_id,
+        method,
+        violations,
+        ffprobe_available(),
+        summary,
+        (body or "")[:400],
+        json.dumps(report, ensure_ascii=False, default=str),
+    )
+
+    await _notify_ig_upload_failure(
+        "\n".join(
+            [
+                f"IG rupload rejected (HTTP {status}, attempt {attempt})",
+                f"creation_id: {creation_id}",
+                f"ig_user_id: {ig_user_id}",
+                f"prepared_by: {method}",
+                f"source_violations: {violations}",
+                f"ffprobe_available: {ffprobe_available()}",
+                f"payload: {summary}",
+                f"meta: {(body or '')[:300]}",
+            ]
+        )
+    )
+
+
+async def _notify_ig_upload_failure(text: str) -> None:
+    """Best-effort push of upload diagnostics to the errors channel."""
+    channel = getattr(Config, "ERRORS_CHANNEL", None)
+    token = getattr(Config, "BOT_TOKEN", None)
+    if not channel or not token:
+        return
+    try:
+        from telegram import Bot
+
+        bot = Bot(token=token)
+        async with bot:
+            await bot.send_message(chat_id=channel, text=text[:4000])
+    except Exception:
+        logger.exception("Failed to push IG upload diagnostics to the errors channel.")
 
 
 def _meta_schedule_unix(payload: dict[str, Any]) -> int | None:
@@ -433,14 +537,17 @@ async def _ig_upload_and_publish_video_resumable(
     schedule_unix: int | None = None,
     publish_now: bool = True,
     access_token: str | None = None,
+    prepared: VideoNormalizeResult | None = None,
+    attempt: int = 1,
 ) -> dict[str, Any]:
     token = access_token or Config.META_ACCESS_TOKEN
     upload_url = f"{Config.RUUPLOAD_BASE}/ig-api-upload/{Config.META_GRAPH_VERSION}/{creation_id}"
     logger.debug(
-        "IG resumable upload: ig_user_id=%s creation_id=%s bytes=%s",
+        "IG resumable upload: ig_user_id=%s creation_id=%s bytes=%s attempt=%s",
         ig_user_id,
         creation_id,
         len(video_bytes),
+        attempt,
     )
     headers = {
         "Authorization": f"OAuth {token}",
@@ -451,16 +558,27 @@ async def _ig_upload_and_publish_video_resumable(
     async with session.post(upload_url, headers=headers, data=video_bytes) as resp:
         if resp.status >= 400:
             body = await resp.text()
+            await _report_ig_upload_rejection(
+                creation_id=creation_id,
+                ig_user_id=ig_user_id,
+                status=resp.status,
+                body=body,
+                video_bytes=video_bytes,
+                prepared=prepared,
+                attempt=attempt,
+            )
             raise MetaPublishUserError(
                 "meta_err_ig_resumable_upload",
                 status=resp.status,
                 detail=(body or "")[:400],
             )
         logger.info(
-            "IG rupload ok: creation_id=%s status=%s bytes=%s",
+            "IG rupload ok: creation_id=%s status=%s bytes=%s attempt=%s method=%s",
             creation_id,
             resp.status,
             len(video_bytes),
+            attempt,
+            prepared.method if prepared else "unknown",
         )
 
     await _ig_wait_container_ready(
@@ -881,28 +999,54 @@ async def _publish_instagram(
         if video_bytes is None:
             raise MetaPublishUserError("meta_err_ig_missing_video_bytes")
 
-        video_bytes = _prepare_instagram_video_bytes(video_bytes, post_type)
-
         ig_media_type = media_type_map[post_type]
-        creation_id = await _ig_create_container(
-            session=session,
-            ig_user_id=ig_user_id,
-            media_type=ig_media_type,
-            caption=platforms_caption if platforms_caption else None,
-            upload_type="resumable",
-            schedule_unix=schedule_unix,
-            publish_now=publish_now,
-            access_token=access_token,
-        )
-        await _ig_upload_and_publish_video_resumable(
-            session=session,
-            ig_user_id=ig_user_id,
-            creation_id=creation_id,
-            video_bytes=video_bytes,
-            schedule_unix=schedule_unix,
-            publish_now=publish_now,
-            access_token=access_token,
-        )
+
+        async def _attempt(prepared: VideoNormalizeResult, attempt: int) -> None:
+            # Each attempt needs its own container: a creation_id is spent once.
+            creation_id = await _ig_create_container(
+                session=session,
+                ig_user_id=ig_user_id,
+                media_type=ig_media_type,
+                caption=platforms_caption if platforms_caption else None,
+                upload_type="resumable",
+                schedule_unix=schedule_unix,
+                publish_now=publish_now,
+                access_token=access_token,
+            )
+            await _ig_upload_and_publish_video_resumable(
+                session=session,
+                ig_user_id=ig_user_id,
+                creation_id=creation_id,
+                video_bytes=prepared.video_bytes,
+                schedule_unix=schedule_unix,
+                publish_now=publish_now,
+                access_token=access_token,
+                prepared=prepared,
+                attempt=attempt,
+            )
+
+        prepared = _prepare_instagram_video_bytes(video_bytes, post_type)
+        try:
+            await _attempt(prepared, 1)
+        except MetaPublishUserError as exc:
+            if not _is_ig_processing_failure(exc) or not getattr(
+                Config, "IG_REELS_SAFE_MODE_RETRY", True
+            ):
+                raise
+            logger.warning(
+                "Instagram ingest rejected the %s payload; retrying once in safe mode.",
+                prepared.method,
+            )
+            # Re-normalize from the original source, not the rejected output.
+            safe_prepared = _prepare_instagram_video_bytes(
+                video_bytes, post_type, safe_mode=True
+            )
+            await _attempt(safe_prepared, 2)
+            logger.info(
+                "Instagram publish succeeded on safe-mode retry: method=%s",
+                safe_prepared.method,
+            )
+
         return TEXTS[lang]["meta_upload_publish_ok_instagram"]
 
     # Photo branch
